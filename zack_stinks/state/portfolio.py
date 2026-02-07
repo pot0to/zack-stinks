@@ -1,11 +1,14 @@
 import reflex as rx
 import asyncio
 import json
+from datetime import datetime
 import robin_stocks.robinhood as rs
 import plotly.graph_objects as go
 import pandas as pd
 from .base import BaseState
 from ..utils.auth import get_rh_credentials
+
+SHARES_PER_CONTRACT = 100
 
 class PortfolioState(BaseState):
     # Map account names to their internal Robinhood account numbers
@@ -66,25 +69,47 @@ class PortfolioState(BaseState):
         raw_options = self.all_options_holdings.get(acc_num, [])
         raw_stocks = self.all_stock_holdings.get(acc_num, [])
         
-        # 2. Calculate TOTAL equity (Stocks + Options) for accurate allocation %
-        stock_total = sum(float(s.get("raw_equity", 0)) for s in raw_stocks)
-        option_total = sum(float(o.get("raw_equity", 0)) for o in raw_options)
-        total_account_equity = stock_total + option_total
+        # 2. Calculate total ABSOLUTE exposure for weight calculation
+        stock_exposure = sum(abs(float(s.get("raw_equity", 0))) for s in raw_stocks)
+        option_exposure = sum(abs(float(o.get("raw_equity", 0))) for o in raw_options)
+        total_exposure = stock_exposure + option_exposure
         
         formatted = []
         for item in raw_options:
             val = float(item.get("raw_equity", 0))
-            contracts = float(item.get("shares", 0)) # Using shares key as contracts
+            contracts = float(item.get("shares", 0))
+            is_short = item.get("is_short", False)
+            position_type = item.get("position_type", "long")
             
-            # Calculate % of the TOTAL account
-            allocation = (val / total_account_equity * 100) if total_account_equity > 0 else 0
+            # Weight = absolute value / total absolute exposure
+            weight = (abs(val) / total_exposure * 100) if total_exposure > 0 else 0
+            
+            # Extract new fields
+            strike = float(item.get("strike_price", 0))
+            option_type = item.get("option_type", "")
+            dte = int(item.get("dte", 0))
+            delta = float(item.get("delta", 0))
+            underlying = float(item.get("underlying_price", 0))
+            cost_basis = float(item.get("cost_basis", 0))
+            current_value = float(item.get("current_value", 0))
+            pl = float(item.get("pl", 0))
             
             formatted.append({
                 "symbol": item.get("symbol", "???"),
-                "contracts": f"{contracts:.0f}", # Options are usually whole numbers
-                "value": f"${val:,.2f}",
-                "allocation": f"{allocation:.1f}%",
-                "raw_equity": val
+                "strike": f"${strike:,.2f}",
+                "option_type": option_type,
+                "side": "Short" if is_short else "Long",
+                "dte": str(dte),
+                "underlying": f"${underlying:,.2f}",
+                "delta": f"{delta:.3f}",
+                "cost_basis": f"${cost_basis:,.2f}",
+                "current_value": f"${current_value:,.2f}",
+                "pl": pl,
+                "pl_formatted": f"${abs(pl):,.2f}" if pl >= 0 else f"-${abs(pl):,.2f}",
+                "pl_positive": pl >= 0,
+                "weight": f"{weight:.1f}%",
+                "is_short": is_short,
+                "raw_equity": val,
             })
         return formatted
     
@@ -107,16 +132,45 @@ class PortfolioState(BaseState):
 
     @rx.var
     def portfolio_treemap(self) -> go.Figure:
-        # Use the specifically named computed var, not the base var
-        holdings = self.selected_account_stock_holdings 
-        if not holdings: 
+        """Treemap showing all positions (stocks + options) sized by absolute exposure.
+        Color indicates direction: green for long, orange for short."""
+        acc_num = self.account_map.get(self.selected_account)
+        if not acc_num:
             return go.Figure()
+        
+        # Get raw data for both stocks and options
+        raw_stocks = self.all_stock_holdings.get(acc_num, [])
+        raw_options = self.all_options_holdings.get(acc_num, [])
+        
+        if not raw_stocks and not raw_options:
+            return go.Figure()
+        
+        # Build combined lists for treemap
+        labels = []
+        values = []
+        colors = []
+        
+        # Add stocks (all long positions, green)
+        for s in raw_stocks:
+            labels.append(s.get("symbol", "???"))
+            values.append(abs(float(s.get("raw_equity", 0))))
+            colors.append("rgb(34, 197, 94)")  # Green for long
+        
+        # Add options with color based on direction
+        for o in raw_options:
+            symbol = o.get("symbol", "???")
+            is_short = o.get("is_short", False)
+            # Add suffix to distinguish options from stocks
+            labels.append(f"{symbol} (Opt)")
+            values.append(abs(float(o.get("raw_equity", 0))))
+            colors.append("rgb(249, 115, 22)" if is_short else "rgb(34, 197, 94)")  # Orange for short
 
         fig = go.Figure(go.Treemap(
-            labels=[h["symbol"] for h in holdings],
-            parents=[""] * len(holdings),
-            values=[h["raw_equity"] for h in holdings],
+            labels=labels,
+            parents=[""] * len(labels),
+            values=values,
             textinfo="label+percent parent",
+            marker=dict(colors=colors),
         ))
         fig.update_layout(margin=dict(t=0, l=0, r=0, b=0), template="plotly_dark", height=300)
         return fig
@@ -214,32 +268,92 @@ class PortfolioState(BaseState):
                 if option_positions:
                     option_ids = [p['option_id'] for p in option_positions]
                     
-                    # get_quotes is the specific batch-fetcher for Option IDs
+                    # Fetch market data and instrument data for each option
                     market_data = await asyncio.to_thread(
                         lambda ids: [rs.options.get_option_market_data_by_id(oid) for oid in ids],
                         option_ids
                     )
+                    instrument_data = await asyncio.to_thread(
+                        lambda ids: [rs.options.get_option_instrument_data_by_id(oid) for oid in ids],
+                        option_ids
+                    )
+                    
+                    # Get unique underlying symbols and fetch their prices
+                    underlying_symbols = list(set(p["chain_symbol"] for p in option_positions))
+                    underlying_prices_raw = await asyncio.to_thread(rs.stocks.get_latest_price, underlying_symbols)
+                    underlying_price_map = {sym: float(underlying_prices_raw[i] or 0) for i, sym in enumerate(underlying_symbols)}
                     
                     for i, p in enumerate(option_positions):
                         m_data = market_data[i] if (market_data and i < len(market_data)) else None
+                        i_data = instrument_data[i] if (instrument_data and i < len(instrument_data)) else None
 
                         mark = 0.0
-                        # Default label if market data is missing
-                        symbol_label = "Unknown Option"
+                        delta = 0.0
                         
-                        if m_data and isinstance(m_data, dict):
-                            mark = float(m_data.get('mark_price', 0) or 0)
-                            # Pull the strike and symbol from the market data instead of p
-                            strike = m_data.get('strike_price', '??')
-                            ticker = m_data.get('symbol', p.get('chain_symbol', 'OPT'))
-                            type_ = m_data.get('type', '??').upper()
+                        # API returns a list; extract first element to get the dict
+                        if m_data and isinstance(m_data, list) and len(m_data) > 0:
+                            option_data = m_data[0]
+                            mark = float(option_data.get('adjusted_mark_price') or option_data.get('mark_price') or 0)
+                            delta = float(option_data.get('delta') or 0)
+                        elif m_data and isinstance(m_data, dict):
+                            mark = float(m_data.get('adjusted_mark_price') or m_data.get('mark_price') or 0)
+                            delta = float(m_data.get('delta') or 0)
+                        
+                        # Extract instrument details
+                        strike_price = float(i_data.get('strike_price', 0)) if i_data else 0
+                        expiration_date = i_data.get('expiration_date', '') if i_data else ''
+                        option_type = (i_data.get('type', '') if i_data else '').capitalize()  # "call" or "put"
+                        
+                        # Calculate DTE
+                        dte = 0
+                        if expiration_date:
+                            try:
+                                exp_dt = datetime.strptime(expiration_date, '%Y-%m-%d')
+                                dte = (exp_dt - datetime.now()).days
+                                if dte < 0:
+                                    dte = 0
+                            except ValueError:
+                                pass
                     
                         qty = float(p['quantity'])
+                        position_type = p.get('type', 'long')  # "long" or "short"
+                        is_short = position_type == 'short'
+                        
+                        # Cost basis: average_price is already the per-contract price
+                        # Use abs() since API may return negative for short positions
+                        avg_price = abs(float(p.get('average_price', 0)))
+                        cost_basis = avg_price * qty
+                        
+                        # Current value
+                        current_value = qty * mark * SHARES_PER_CONTRACT
+                        
+                        # P/L calculation: Long = current - cost, Short = cost - current
+                        if is_short:
+                            pl = cost_basis - current_value  # Profit when value decreases
+                        else:
+                            pl = current_value - cost_basis  # Profit when value increases
+                        
+                        # For short positions, value represents liability (negative contribution)
+                        signed_value = -current_value if is_short else current_value
+                        
+                        # Get underlying price
+                        underlying_price = underlying_price_map.get(p["chain_symbol"], 0)
+                        
                         acc_options.append({
                             "symbol": p["chain_symbol"],
-                            "contracts": qty, 
-                            "value": qty * mark * 100,
-                            "type": "Option"
+                            "shares": qty,
+                            "raw_equity": signed_value,
+                            "position_type": position_type,
+                            "is_short": is_short,
+                            "strike_price": strike_price,
+                            "option_type": option_type,
+                            "expiration_date": expiration_date,
+                            "dte": dte,
+                            "delta": delta,
+                            "underlying_price": underlying_price,
+                            "cost_basis": cost_basis,
+                            "current_value": current_value,
+                            "pl": pl,
                         })
 
                 # 3. Update State Dictionaries

@@ -132,21 +132,52 @@ def options_holdings_table():
         rx.table.root(
             rx.table.header(
                 rx.table.row(
-                    rx.table.column_header_cell("Ticker Symbol"),
-                    rx.table.column_header_cell("Contracts"),
-                    rx.table.column_header_cell("Market Value"),
-                    rx.table.column_header_cell("Portfolio %"),
+                    rx.table.column_header_cell("Symbol"),
+                    rx.table.column_header_cell("Strike"),
+                    rx.table.column_header_cell("Type"),
+                    rx.table.column_header_cell("Side"),
+                    rx.table.column_header_cell("DTE"),
+                    rx.table.column_header_cell("Underlying"),
+                    rx.table.column_header_cell("Delta"),
+                    rx.table.column_header_cell("Cost Basis"),
+                    rx.table.column_header_cell("Current Value"),
+                    rx.table.column_header_cell("P/L"),
+                    rx.table.column_header_cell("Weight"),
                 ),
             ),
             rx.table.body(
-                # Points to the Options computed var
                 rx.foreach(
                     PortfolioState.selected_account_option_holdings, 
                     lambda h: rx.table.row(
                         rx.table.cell(rx.text(h["symbol"], weight="bold")),
-                        rx.table.cell(h["contracts"]),
-                        rx.table.cell(h["value"]),
-                        rx.table.cell(h["allocation"]),
+                        rx.table.cell(h["strike"]),
+                        rx.table.cell(
+                            rx.badge(
+                                h["option_type"],
+                                color_scheme=rx.cond(h["option_type"] == "Call", "blue", "purple"),
+                                variant="soft",
+                            )
+                        ),
+                        rx.table.cell(
+                            rx.badge(
+                                h["side"],
+                                color_scheme=rx.cond(h["is_short"], "orange", "green"),
+                                variant="soft",
+                            )
+                        ),
+                        rx.table.cell(h["dte"]),
+                        rx.table.cell(h["underlying"]),
+                        rx.table.cell(h["delta"]),
+                        rx.table.cell(h["cost_basis"]),
+                        rx.table.cell(h["current_value"]),
+                        rx.table.cell(
+                            rx.text(
+                                h["pl_formatted"],
+                                color=rx.cond(h["pl_positive"], "green", "red"),
+                                weight="medium",
+                            )
+                        ),
+                        rx.table.cell(h["weight"]),
                     ),
                 )
             ),
