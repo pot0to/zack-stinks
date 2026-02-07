@@ -2,7 +2,7 @@ import reflex as rx
 from ..components.sidebar import sidebar
 from ..state import MarketState
 
-def market():
+def market_page():
     return rx.hstack(
         sidebar(),
         market_overview()
