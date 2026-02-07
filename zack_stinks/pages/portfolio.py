@@ -95,20 +95,40 @@ def allocation_view():
         margin_top="1.5em",
     )
 
+def sortable_stock_header(label: str, sort_key: str):
+    """Create a clickable column header for stock table sorting."""
+    return rx.table.column_header_cell(
+        rx.hstack(
+            rx.text(label),
+            rx.cond(
+                PortfolioState.stock_sort_column == sort_key,
+                rx.icon(
+                    rx.cond(PortfolioState.stock_sort_ascending, "chevron-up", "chevron-down"),
+                    size=14,
+                ),
+                rx.fragment(),
+            ),
+            spacing="1",
+            align="center",
+            cursor="pointer",
+        ),
+        on_click=lambda: PortfolioState.set_stock_sort(sort_key),
+    )
+
 def stock_holdings_table():
     return rx.vstack(
         rx.text("Holdings Detail", weight="bold", margin_top="2em", size="4"),
         rx.table.root(
             rx.table.header(
                 rx.table.row(
-                    rx.table.column_header_cell("Symbol"),
-                    rx.table.column_header_cell("Price"),
-                    rx.table.column_header_cell("Shares"),
-                    rx.table.column_header_cell("Market Value"),
-                    rx.table.column_header_cell("Avg Cost"),
-                    rx.table.column_header_cell("P/L ($)"),
-                    rx.table.column_header_cell("P/L (%)"),
-                    rx.table.column_header_cell("Portfolio %"),
+                    sortable_stock_header("Symbol", "symbol"),
+                    sortable_stock_header("Price", "price_raw"),
+                    sortable_stock_header("Shares", "shares_raw"),
+                    sortable_stock_header("Market Value", "value_raw"),
+                    sortable_stock_header("Avg Cost", "avg_cost_raw"),
+                    sortable_stock_header("P/L ($)", "pl_raw"),
+                    sortable_stock_header("P/L (%)", "pl_pct_raw"),
+                    sortable_stock_header("Portfolio %", "allocation_raw"),
                 ),
             ),
             rx.table.body(
@@ -158,24 +178,44 @@ def stock_holdings_table():
         width="100%",
     )
 
+def sortable_options_header(label: str, sort_key: str):
+    """Create a clickable column header for options table sorting."""
+    return rx.table.column_header_cell(
+        rx.hstack(
+            rx.text(label),
+            rx.cond(
+                PortfolioState.options_sort_column == sort_key,
+                rx.icon(
+                    rx.cond(PortfolioState.options_sort_ascending, "chevron-up", "chevron-down"),
+                    size=14,
+                ),
+                rx.fragment(),
+            ),
+            spacing="1",
+            align="center",
+            cursor="pointer",
+        ),
+        on_click=lambda: PortfolioState.set_options_sort(sort_key),
+    )
+
 def options_holdings_table():
     return rx.vstack(
         rx.text("Options Detail", weight="bold", margin_top="2em", size="4"),
         rx.table.root(
             rx.table.header(
                 rx.table.row(
-                    rx.table.column_header_cell("Symbol"),
-                    rx.table.column_header_cell("Strike"),
-                    rx.table.column_header_cell("Type"),
-                    rx.table.column_header_cell("Side"),
-                    rx.table.column_header_cell("DTE"),
-                    rx.table.column_header_cell("Underlying"),
-                    rx.table.column_header_cell("Delta"),
-                    rx.table.column_header_cell("Cost Basis"),
-                    rx.table.column_header_cell("Current Value"),
-                    rx.table.column_header_cell("P/L ($)"),
-                    rx.table.column_header_cell("P/L (%)"),
-                    rx.table.column_header_cell("Weight"),
+                    sortable_options_header("Symbol", "symbol"),
+                    sortable_options_header("Strike", "strike_raw"),
+                    sortable_options_header("Type", "option_type"),
+                    sortable_options_header("Side", "side"),
+                    sortable_options_header("DTE", "dte_raw"),
+                    sortable_options_header("Underlying", "underlying_raw"),
+                    sortable_options_header("Delta", "delta_raw"),
+                    sortable_options_header("Cost Basis", "cost_basis_raw"),
+                    sortable_options_header("Current Value", "current_value_raw"),
+                    sortable_options_header("P/L ($)", "pl_raw"),
+                    sortable_options_header("P/L (%)", "pl_pct_raw"),
+                    sortable_options_header("Weight", "weight_raw"),
                 ),
             ),
             rx.table.body(
@@ -218,6 +258,8 @@ def options_holdings_table():
                             )
                         ),
                         rx.table.cell(h["weight"]),
+                        # ITM highlight: yellow background for in-the-money options
+                        background_color=rx.cond(h["is_itm"], "rgba(250, 204, 21, 0.15)", "transparent"),
                     ),
                 )
             ),
@@ -235,7 +277,7 @@ def holdings_section():
             rx.tabs.trigger("Stocks", value="stocks_tab"),
         ),
         rx.tabs.content(
-            options_holdings_table(), 
+            options_holdings_table(),
             value="options_tab"
         ),
         rx.tabs.content(

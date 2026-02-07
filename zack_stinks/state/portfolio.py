@@ -22,6 +22,32 @@ class PortfolioState(BaseState):
 
     cash_balance: str = "$0.00"
     buying_power: str = "$0.00"
+    
+    # Sorting state for stock holdings table
+    # Default: sort by allocation descending
+    stock_sort_column: str = "allocation_raw"
+    stock_sort_ascending: bool = False
+    
+    # Sorting state for options holdings table
+    # Default: sort by DTE ascending
+    options_sort_column: str = "dte_raw"
+    options_sort_ascending: bool = True
+    
+    def set_stock_sort(self, column: str):
+        """Toggle sort direction if same column, otherwise set new column ascending."""
+        if self.stock_sort_column == column:
+            self.stock_sort_ascending = not self.stock_sort_ascending
+        else:
+            self.stock_sort_column = column
+            self.stock_sort_ascending = True
+    
+    def set_options_sort(self, column: str):
+        """Toggle sort direction if same column, otherwise set new column ascending."""
+        if self.options_sort_column == column:
+            self.options_sort_ascending = not self.options_sort_ascending
+        else:
+            self.options_sort_column = column
+            self.options_sort_ascending = True
 
     @rx.var
     def account_names(self) -> list[str]:
@@ -59,18 +85,42 @@ class PortfolioState(BaseState):
             
             formatted.append({
                 "symbol": item.get("symbol", "???"),
+                "price_raw": price,
                 "price": f"${price:,.2f}",
+                "shares_raw": shares,
                 "shares": f"{shares:.4f}",
+                "value_raw": val,
                 "value": f"${val:,.2f}",
+                "avg_cost_raw": avg_buy_price if cost_basis_reliable else None,
                 "avg_cost": f"${avg_buy_price:,.2f}" if cost_basis_reliable else "N/A",
+                "pl_raw": pl if cost_basis_reliable else None,
                 "pl": pl,
                 "pl_formatted": (f"${abs(pl):,.2f}" if pl >= 0 else f"-${abs(pl):,.2f}") if cost_basis_reliable else "N/A",
+                "pl_pct_raw": pl_pct if cost_basis_reliable else None,
                 "pl_pct_formatted": (f"{abs(pl_pct):.1f}%" if pl_pct >= 0 else f"-{abs(pl_pct):.1f}%") if cost_basis_reliable else "N/A",
                 "pl_positive": pl >= 0,
                 "cost_basis_reliable": cost_basis_reliable,
                 "allocation": f"{allocation:.1f}%",
+                "allocation_raw": allocation,
                 "raw_equity": val
             })
+        
+        # Dynamic sorting based on state
+        sort_col = self.stock_sort_column
+        ascending = self.stock_sort_ascending
+        
+        def sort_key(x):
+            val = x.get(sort_col)
+            # N/A values (None) go to bottom regardless of sort direction
+            if val is None:
+                return (1, 0)  # (is_none, value) - None items sort last
+            # Text columns sort alphabetically
+            if isinstance(val, str):
+                return (0, val.lower())
+            # Numeric columns sort by value
+            return (0, val)
+        
+        formatted.sort(key=sort_key, reverse=not ascending)
         return formatted
     
     @rx.var
@@ -110,24 +160,56 @@ class PortfolioState(BaseState):
             # P/L percentage = pl / cost_basis * 100
             pl_pct = (pl / cost_basis * 100) if cost_basis > 0 else 0
             
+            # Determine if option is in-the-money (ITM)
+            # Call: ITM when underlying > strike, Put: ITM when underlying < strike
+            is_itm = (option_type == "Call" and underlying > strike) or \
+                     (option_type == "Put" and underlying < strike)
+            
             formatted.append({
                 "symbol": item.get("symbol", "???"),
+                "strike_raw": strike,
                 "strike": f"${strike:,.2f}",
                 "option_type": option_type,
                 "side": "Short" if is_short else "Long",
                 "dte": str(dte),
+                "dte_raw": dte,
+                "underlying_raw": underlying,
                 "underlying": f"${underlying:,.2f}",
+                "delta_raw": delta,
                 "delta": f"{delta:.3f}",
+                "cost_basis_raw": cost_basis,
                 "cost_basis": f"${cost_basis:,.2f}",
+                "current_value_raw": current_value,
                 "current_value": f"${current_value:,.2f}",
                 "pl": pl,
+                "pl_raw": pl,
                 "pl_formatted": f"${abs(pl):,.2f}" if pl >= 0 else f"-${abs(pl):,.2f}",
+                "pl_pct_raw": pl_pct,
                 "pl_pct_formatted": f"{abs(pl_pct):.1f}%" if pl_pct >= 0 else f"-{abs(pl_pct):.1f}%",
                 "pl_positive": pl >= 0,
+                "weight_raw": weight,
                 "weight": f"{weight:.1f}%",
                 "is_short": is_short,
+                "is_itm": is_itm,
                 "raw_equity": val,
             })
+        
+        # Dynamic sorting based on state
+        sort_col = self.options_sort_column
+        ascending = self.options_sort_ascending
+        
+        def sort_key(x):
+            val = x.get(sort_col)
+            # N/A values (None) go to bottom regardless of sort direction
+            if val is None:
+                return (1, 0)
+            # Text columns sort alphabetically
+            if isinstance(val, str):
+                return (0, val.lower())
+            # Numeric columns sort by value
+            return (0, val)
+        
+        formatted.sort(key=sort_key, reverse=not ascending)
         return formatted
     
     @rx.var
