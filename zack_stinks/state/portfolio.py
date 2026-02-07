@@ -45,16 +45,29 @@ class PortfolioState(BaseState):
         
         formatted = []
         for item in raw_data:
-            # Force everything to float for the math
             val = float(item.get("raw_equity", 0))
             shares = float(item.get("shares", 0))
+            price = float(item.get("price", 0))
+            avg_buy_price = float(item.get("average_buy_price", 0))
+            cost_basis = float(item.get("cost_basis", 0))
+            pl = float(item.get("pl", 0))
+            cost_basis_reliable = item.get("cost_basis_reliable", True)
             
+            # P/L percentage = (current - cost) / cost * 100
+            pl_pct = (pl / cost_basis * 100) if cost_basis > 0 and cost_basis_reliable else 0
             allocation = (val / total_equity * 100) if total_equity > 0 else 0
             
             formatted.append({
                 "symbol": item.get("symbol", "???"),
+                "price": f"${price:,.2f}",
                 "shares": f"{shares:.4f}",
                 "value": f"${val:,.2f}",
+                "avg_cost": f"${avg_buy_price:,.2f}" if cost_basis_reliable else "N/A",
+                "pl": pl,
+                "pl_formatted": (f"${abs(pl):,.2f}" if pl >= 0 else f"-${abs(pl):,.2f}") if cost_basis_reliable else "N/A",
+                "pl_pct_formatted": (f"{abs(pl_pct):.1f}%" if pl_pct >= 0 else f"-{abs(pl_pct):.1f}%") if cost_basis_reliable else "N/A",
+                "pl_positive": pl >= 0,
+                "cost_basis_reliable": cost_basis_reliable,
                 "allocation": f"{allocation:.1f}%",
                 "raw_equity": val
             })
@@ -94,6 +107,9 @@ class PortfolioState(BaseState):
             current_value = float(item.get("current_value", 0))
             pl = float(item.get("pl", 0))
             
+            # P/L percentage = pl / cost_basis * 100
+            pl_pct = (pl / cost_basis * 100) if cost_basis > 0 else 0
+            
             formatted.append({
                 "symbol": item.get("symbol", "???"),
                 "strike": f"${strike:,.2f}",
@@ -106,6 +122,7 @@ class PortfolioState(BaseState):
                 "current_value": f"${current_value:,.2f}",
                 "pl": pl,
                 "pl_formatted": f"${abs(pl):,.2f}" if pl >= 0 else f"-${abs(pl):,.2f}",
+                "pl_pct_formatted": f"{abs(pl_pct):.1f}%" if pl_pct >= 0 else f"-{abs(pl_pct):.1f}%",
                 "pl_positive": pl >= 0,
                 "weight": f"{weight:.1f}%",
                 "is_short": is_short,
@@ -256,10 +273,30 @@ class PortfolioState(BaseState):
                     for i, p in enumerate(stock_positions):
                         price = float(prices[i]) if prices[i] else 0.0
                         qty = float(p['quantity'])
+                        
+                        # Get average buy price from position data
+                        # Note: This may be inaccurate for transferred positions (ACATS)
+                        # as Robinhood's API doesn't expose tax lot cost basis
+                        avg_buy_price_raw = p.get('average_buy_price') or p.get('pending_average_buy_price') or 0
+                        avg_buy_price = float(avg_buy_price_raw) if avg_buy_price_raw else 0.0
+                        
+                        # Flag unreliable cost basis (likely transferred positions)
+                        # If avg cost is 0 or less than 1% of current price, it's suspect
+                        cost_basis_reliable = avg_buy_price > 0 and (price == 0 or avg_buy_price > price * 0.01)
+                        
+                        cost_basis = qty * avg_buy_price
+                        market_value = qty * price
+                        pl = market_value - cost_basis if cost_basis_reliable else 0
+                        
                         acc_stocks.append({
                             "symbol": stock_symbols[i],
                             "shares": qty,
-                            "raw_equity": qty * price,
+                            "price": price,
+                            "raw_equity": market_value,
+                            "average_buy_price": avg_buy_price,
+                            "cost_basis": cost_basis,
+                            "cost_basis_reliable": cost_basis_reliable,
+                            "pl": pl,
                             "type": "Stock"
                         })
 

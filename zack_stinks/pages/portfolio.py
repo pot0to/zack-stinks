@@ -102,19 +102,51 @@ def stock_holdings_table():
             rx.table.header(
                 rx.table.row(
                     rx.table.column_header_cell("Symbol"),
+                    rx.table.column_header_cell("Price"),
                     rx.table.column_header_cell("Shares"),
                     rx.table.column_header_cell("Market Value"),
+                    rx.table.column_header_cell("Avg Cost"),
+                    rx.table.column_header_cell("P/L ($)"),
+                    rx.table.column_header_cell("P/L (%)"),
                     rx.table.column_header_cell("Portfolio %"),
                 ),
             ),
             rx.table.body(
-                # Use 'current_stocks' (the computed var) instead of the dictionary
                 rx.foreach(
                     PortfolioState.selected_account_stock_holdings, 
                     lambda h: rx.table.row(
                         rx.table.cell(rx.text(h["symbol"], weight="bold")),
+                        rx.table.cell(h["price"]),
                         rx.table.cell(h["shares"]),
                         rx.table.cell(h["value"]),
+                        rx.table.cell(
+                            rx.text(
+                                h["avg_cost"],
+                                color=rx.cond(h["cost_basis_reliable"], "inherit", "gray"),
+                            )
+                        ),
+                        rx.table.cell(
+                            rx.text(
+                                h["pl_formatted"],
+                                color=rx.cond(
+                                    h["cost_basis_reliable"],
+                                    rx.cond(h["pl_positive"], "green", "red"),
+                                    "gray"
+                                ),
+                                weight="medium",
+                            )
+                        ),
+                        rx.table.cell(
+                            rx.text(
+                                h["pl_pct_formatted"],
+                                color=rx.cond(
+                                    h["cost_basis_reliable"],
+                                    rx.cond(h["pl_positive"], "green", "red"),
+                                    "gray"
+                                ),
+                                weight="medium",
+                            )
+                        ),
                         rx.table.cell(h["allocation"]),
                     ),
                 )
@@ -141,7 +173,8 @@ def options_holdings_table():
                     rx.table.column_header_cell("Delta"),
                     rx.table.column_header_cell("Cost Basis"),
                     rx.table.column_header_cell("Current Value"),
-                    rx.table.column_header_cell("P/L"),
+                    rx.table.column_header_cell("P/L ($)"),
+                    rx.table.column_header_cell("P/L (%)"),
                     rx.table.column_header_cell("Weight"),
                 ),
             ),
@@ -173,6 +206,13 @@ def options_holdings_table():
                         rx.table.cell(
                             rx.text(
                                 h["pl_formatted"],
+                                color=rx.cond(h["pl_positive"], "green", "red"),
+                                weight="medium",
+                            )
+                        ),
+                        rx.table.cell(
+                            rx.text(
+                                h["pl_pct_formatted"],
                                 color=rx.cond(h["pl_positive"], "green", "red"),
                                 weight="medium",
                             )
