@@ -6,6 +6,7 @@ import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from .base import BaseState
+from ..utils.technical import calculate_ma_proximity, calculate_ma_series
 
 
 class ResearchState(BaseState):
@@ -89,27 +90,19 @@ class ResearchState(BaseState):
             self.volatility = f"{vol:.1f}%"
 
             # 50-day and 200-day moving average comparisons
-            if len(full_hist) >= 50:
-                ma_50_current = full_hist['Close'].rolling(window=50).mean().iloc[-1]
-                pct_from_50 = ((current - ma_50_current) / ma_50_current) * 100
-                self.ma_50_pct = f"{pct_from_50:+.1f}%"
-            else:
-                self.ma_50_pct = "N/A"
+            ma_50_val, pct_from_50 = calculate_ma_proximity(full_hist['Close'], 50)
+            self.ma_50_pct = f"{pct_from_50:+.1f}%" if pct_from_50 is not None else "N/A"
 
-            if len(full_hist) >= 200:
-                ma_200_current = full_hist['Close'].rolling(window=200).mean().iloc[-1]
-                pct_from_200 = ((current - ma_200_current) / ma_200_current) * 100
-                self.ma_200_pct = f"{pct_from_200:+.1f}%"
-            else:
-                self.ma_200_pct = "N/A"
+            ma_200_val, pct_from_200 = calculate_ma_proximity(full_hist['Close'], 200)
+            self.ma_200_pct = f"{pct_from_200:+.1f}%" if pct_from_200 is not None else "N/A"
 
             # MACD
             macd_value = self._calculate_macd(full_hist['Close'])
             self.macd_signal = "Positive" if macd_value > 0 else "Negative"
 
-            # Calculate MAs from full history
-            ma_50_series = full_hist['Close'].rolling(window=50).mean() if len(full_hist) >= 50 else None
-            ma_200_series = full_hist['Close'].rolling(window=200).mean() if len(full_hist) >= 200 else None
+            # Calculate MA series from full history for charting
+            ma_50_series = calculate_ma_series(full_hist['Close'], 50)
+            ma_200_series = calculate_ma_series(full_hist['Close'], 200)
 
             # Get chart data for the selected display period
             chart_hist = await asyncio.to_thread(
