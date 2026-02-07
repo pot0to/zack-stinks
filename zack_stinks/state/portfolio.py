@@ -232,7 +232,7 @@ class PortfolioState(BaseState):
     @rx.var
     def portfolio_treemap(self) -> go.Figure:
         """Treemap showing all positions (stocks + options) sized by absolute exposure.
-        Color indicates direction: green for long, orange for short."""
+        Color indicates P/L: green gradient for gains, red gradient for losses, gray for N/A."""
         acc_num = self.account_map.get(self.selected_account)
         if not acc_num:
             return go.Figure()
@@ -244,25 +244,70 @@ class PortfolioState(BaseState):
         if not raw_stocks and not raw_options:
             return go.Figure()
         
+        def pl_to_color(pl_pct: float | None) -> str:
+            """Convert P/L percentage to color. None = gray, positive = green, negative = red.
+            Uses lighter shades for readability with dark text."""
+            if pl_pct is None:
+                return "rgb(128, 128, 128)"  # Neutral gray for N/A
+            
+            # Clamp percentage to reasonable range for color scaling
+            clamped = max(-100, min(100, pl_pct))
+            # Normalize to 0-1 range (0 = neutral, 1 = max intensity)
+            intensity = abs(clamped) / 100
+            
+            if pl_pct >= 0:
+                # Green gradient: from light green to deeper green
+                # Base: rgb(187, 247, 208) -> Deep: rgb(34, 197, 94)
+                r = int(187 - (187 - 34) * intensity)
+                g = int(247 - (247 - 197) * intensity)
+                b = int(208 - (208 - 94) * intensity)
+            else:
+                # Red gradient: from light red to deeper red
+                # Base: rgb(254, 202, 202) -> Deep: rgb(239, 68, 68)
+                r = int(254 - (254 - 239) * intensity)
+                g = int(202 - (202 - 68) * intensity)
+                b = int(202 - (202 - 68) * intensity)
+            
+            return f"rgb({r}, {g}, {b})"
+        
         # Build combined lists for treemap
         labels = []
         values = []
         colors = []
         
-        # Add stocks (all long positions, green)
+        # Add stocks with P/L-based coloring
         for s in raw_stocks:
             labels.append(s.get("symbol", "???"))
             values.append(abs(float(s.get("raw_equity", 0))))
-            colors.append("rgb(34, 197, 94)")  # Green for long
+            
+            # Calculate P/L percentage for color
+            cost_basis = float(s.get("cost_basis", 0))
+            pl = float(s.get("pl", 0))
+            cost_basis_reliable = s.get("cost_basis_reliable", True)
+            
+            if cost_basis_reliable and cost_basis > 0:
+                pl_pct = (pl / cost_basis) * 100
+            else:
+                pl_pct = None
+            
+            colors.append(pl_to_color(pl_pct))
         
-        # Add options with color based on direction
+        # Add options with P/L-based coloring
         for o in raw_options:
             symbol = o.get("symbol", "???")
-            is_short = o.get("is_short", False)
-            # Add suffix to distinguish options from stocks
             labels.append(f"{symbol} (Opt)")
             values.append(abs(float(o.get("raw_equity", 0))))
-            colors.append("rgb(249, 115, 22)" if is_short else "rgb(34, 197, 94)")  # Orange for short
+            
+            # Calculate P/L percentage for color
+            cost_basis = float(o.get("cost_basis", 0))
+            pl = float(o.get("pl", 0))
+            
+            if cost_basis > 0:
+                pl_pct = (pl / cost_basis) * 100
+            else:
+                pl_pct = None
+            
+            colors.append(pl_to_color(pl_pct))
 
         fig = go.Figure(go.Treemap(
             labels=labels,
@@ -270,6 +315,7 @@ class PortfolioState(BaseState):
             values=values,
             textinfo="label+percent parent",
             marker=dict(colors=colors),
+            textfont=dict(color="black"),  # Dark text for readability on light backgrounds
         ))
         fig.update_layout(margin=dict(t=0, l=0, r=0, b=0), template="plotly_dark", height=300)
         return fig
