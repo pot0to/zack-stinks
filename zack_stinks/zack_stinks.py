@@ -5,9 +5,17 @@ from .state.portfolio import PortfolioState
 from .state.research import ResearchState
 from .pages.market import market_page
 from .pages.portfolio import portfolio_page
-from .pages.research import research
+from .pages.research import research_page
 
-app = rx.App()
+# App with dark theme (color constants are optimized for dark backgrounds)
+# Note: For true adaptive light/dark, colors would need to use Reflex theme tokens
+app = rx.App(
+    theme=rx.theme(
+        appearance="dark",
+        accent_color="purple",
+        radius="medium",
+    )
+)
 
 # Market Overview Page
 app.add_page(
@@ -25,6 +33,6 @@ app.add_page(
 
 # Stock Research Page
 app.add_page(
-    research,
+    research_page,
     route="/research",
 )

@@ -16,16 +16,24 @@ zack_stinks/
 ├── zack_stinks.py        # App entry point and route definitions
 ├── analyzer.py           # Market analysis logic
 ├── components/
+│   ├── __init__.py       # Component exports
+│   ├── cards.py          # Reusable card components
+│   ├── disclaimer.py     # Disclaimer banner
+│   ├── layout.py         # Shared page layout wrapper
 │   └── sidebar.py        # Navigation sidebar
 ├── pages/
 │   ├── market.py         # Market overview page (/)
 │   ├── portfolio.py      # Portfolio page (/portfolio)
 │   └── research.py       # Research page (/research)
 ├── state/
+│   ├── __init__.py       # State exports
 │   ├── base.py           # Shared state
 │   ├── market.py         # Market page state
 │   ├── portfolio.py      # Portfolio page state
 │   └── research.py       # Research page state
+├── styles/
+│   ├── __init__.py       # Style exports
+│   └── constants.py      # Centralized theming constants
 └── utils/
     ├── auth.py           # Credential loading
     ├── cache.py          # API response caching
