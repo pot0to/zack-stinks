@@ -4,8 +4,9 @@ from datetime import datetime
 import robin_stocks.robinhood as rs
 import plotly.graph_objects as go
 import pandas as pd
+import yfinance as yf
 from .base import BaseState
-from ..utils.cache import get_cached, set_cached, PORTFOLIO_TTL
+from ..utils.cache import get_cached, set_cached, PORTFOLIO_TTL, MARKET_DATA_TTL
 from ..styles.constants import PL_GREEN_BASE, PL_GREEN_DEEP, PL_RED_BASE, PL_RED_DEEP, PL_NEUTRAL
 
 SHARES_PER_CONTRACT = 100
@@ -65,6 +66,9 @@ class PortfolioState(BaseState):
     all_stock_holdings: dict[str, list[dict]] = {}
     all_options_holdings: dict[str, list[dict]] = {}
     metric_data: dict[str, dict[str, str | float]] = {}
+    
+    # S&P 500 benchmark data for comparison
+    sp500_daily_change_pct: float = 0.0
 
     cash_balance: str = "$0.00"
     buying_power: str = "$0.00"
@@ -264,6 +268,36 @@ class PortfolioState(BaseState):
             return f"+${daily_change:,.2f} (+{daily_change_pct:.2f}%)"
         else:
             return f"-${abs(daily_change):,.2f} ({daily_change_pct:.2f}%)"
+
+    @rx.var
+    def selected_account_daily_pct(self) -> float:
+        """Portfolio daily change as a percentage (for benchmark comparison)."""
+        acc_num = self.account_map.get(self.selected_account)
+        if not acc_num:
+            return 0.0
+        
+        metrics = self.metric_data.get(acc_num, {})
+        equity = metrics.get("equity", 0)
+        prev_close = metrics.get("equity_prev_close", 0)
+        
+        if prev_close <= 0:
+            return 0.0
+        
+        return ((equity - prev_close) / prev_close) * 100
+
+    @rx.var
+    def benchmark_comparison(self) -> str:
+        """Relative performance vs S&P 500 (portfolio daily % minus S&P daily %)."""
+        alpha = self.selected_account_daily_pct - self.sp500_daily_change_pct
+        if alpha >= 0:
+            return f"+{alpha:.2f}% vs S&P"
+        else:
+            return f"{alpha:.2f}% vs S&P"
+
+    @rx.var
+    def beating_benchmark(self) -> bool:
+        """True if portfolio is outperforming S&P 500 today."""
+        return self.selected_account_daily_pct >= self.sp500_daily_change_pct
 
     @rx.var
     def portfolio_treemap(self) -> go.Figure:
@@ -548,6 +582,30 @@ class PortfolioState(BaseState):
         
         return acc_options
 
+    async def _fetch_sp500_daily_change(self) -> float:
+        """Fetch S&P 500 daily percentage change for benchmark comparison."""
+        cache_key = "sp500_daily_pct"
+        cached = get_cached(cache_key)
+        if cached is not None:
+            return cached
+        
+        try:
+            ticker = yf.Ticker("^GSPC")
+            df = await asyncio.to_thread(lambda: ticker.history(period="5d"))
+            
+            if df is None or df.empty or len(df) < 2:
+                return 0.0
+            
+            current = df['Close'].iloc[-1]
+            prev = df['Close'].iloc[-2]
+            pct_change = ((current - prev) / prev) * 100
+            
+            set_cached(cache_key, pct_change, MARKET_DATA_TTL)
+            return pct_change
+        except Exception as e:
+            print(f"Error fetching S&P 500 data: {e}")
+            return 0.0
+
     @rx.event(background=True)
     async def fetch_all_portfolio_data(self):
         async with self:
@@ -562,6 +620,7 @@ class PortfolioState(BaseState):
                     self.all_stock_holdings = cached_data["all_stock_holdings"]
                     self.all_options_holdings = cached_data["all_options_holdings"]
                     self.metric_data = cached_data["metric_data"]
+                    self.sp500_daily_change_pct = cached_data.get("sp500_daily_pct", 0.0)
                     if not self.selected_account and self.account_names:
                         self.selected_account = self.account_names[0]
                     if self.selected_account:
@@ -599,12 +658,19 @@ class PortfolioState(BaseState):
                 for name, _ in current_accounts:
                     self.loading_accounts.add(name)
 
-            # Process ALL accounts in parallel
+            # Process ALL accounts in parallel, also fetch S&P 500 for benchmark
             account_tasks = [
                 self._process_single_account(name, acc_num) 
                 for name, acc_num in current_accounts
             ]
-            account_results = await asyncio.gather(*account_tasks, return_exceptions=True)
+            sp500_task = self._fetch_sp500_daily_change()
+            
+            all_results = await asyncio.gather(
+                asyncio.gather(*account_tasks, return_exceptions=True),
+                sp500_task
+            )
+            account_results = all_results[0]
+            sp500_pct = all_results[1]
 
             # Aggregate results
             all_stocks = {}
@@ -631,6 +697,7 @@ class PortfolioState(BaseState):
                 self.all_stock_holdings = all_stocks
                 self.all_options_holdings = all_options
                 self.metric_data = all_metrics
+                self.sp500_daily_change_pct = sp500_pct
                 
                 if self.selected_account:
                     acc_num = self.account_map.get(self.selected_account)
@@ -646,6 +713,7 @@ class PortfolioState(BaseState):
                 "all_stock_holdings": all_stocks,
                 "all_options_holdings": all_options,
                 "metric_data": all_metrics,
+                "sp500_daily_pct": sp500_pct,
             }, PORTFOLIO_TTL)
 
             return rx.toast.success("Portfolio Updated")

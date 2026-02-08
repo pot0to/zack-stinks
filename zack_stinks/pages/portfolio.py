@@ -91,6 +91,16 @@ def _stats_header() -> rx.Component:
                     variant="soft",
                     size="2",
                 ),
+                rx.text(
+                    rx.cond(State.hide_portfolio_values, "***% vs S&P", PortfolioState.benchmark_comparison),
+                    size="1",
+                    color=rx.cond(
+                        State.hide_portfolio_values,
+                        "gray",
+                        rx.cond(PortfolioState.benchmark_comparison.contains("-"), "red", "green")
+                    ),
+                    weight="medium",
+                ),
                 align_items="start",
                 spacing="1",
             )
