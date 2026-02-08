@@ -11,6 +11,51 @@ from ..styles.constants import PL_GREEN_BASE, PL_GREEN_DEEP, PL_RED_BASE, PL_RED
 
 SHARES_PER_CONTRACT = 100
 
+# Broad market index funds and sector ETFs that should be displayed separately
+# from individual stock positions. These represent diversified exposure rather
+# than single-company bets.
+INDEX_FUND_SYMBOLS = frozenset({
+    # S&P 500 trackers
+    "VOO", "SPY", "IVV", "SPLG",
+    # Total market
+    "VTI", "ITOT", "SPTM",
+    # Nasdaq / tech-heavy
+    "QQQ", "QQQM", "VGT", "XLK",
+    # Small cap
+    "IWM", "VB", "SCHA",
+    # Mid cap
+    "VO", "IJH", "SCHM",
+    # Dow Jones
+    "DIA",
+    # Sector ETFs
+    "SMH", "SOXX",  # Semiconductors
+    "XLF", "VFH",   # Financials
+    "XLE", "VDE",   # Energy
+    "XLV", "VHT",   # Healthcare
+    "XLI", "VIS",   # Industrials
+    "XLB", "VAW",   # Materials
+    "XLU", "VPU",   # Utilities
+    "XLP", "VDC",   # Consumer staples
+    "XLY", "VCR",   # Consumer discretionary
+    "XLRE", "VNQ",  # Real estate
+    "XLC",          # Communication services
+    # International
+    "VEA", "IEFA", "EFA",   # Developed markets
+    "VWO", "IEMG", "EEM",   # Emerging markets
+    "VXUS",                  # Total international
+    # Bonds (if held)
+    "BND", "AGG", "TLT", "IEF", "SHY",
+    # Thematic / ARK
+    "ARKK", "ARKW", "ARKF", "ARKG", "ARKQ",
+    # Leveraged (common ones)
+    "TQQQ", "SQQQ", "SPXL", "SPXS", "UPRO",
+})
+
+
+def is_index_fund(symbol: str) -> bool:
+    """Check if a symbol is a broad market index fund or sector ETF."""
+    return symbol.upper() in INDEX_FUND_SYMBOLS
+
 
 def _sort_key_for_column(x: dict, sort_col: str):
     """Generic sort key function for table sorting.
@@ -236,6 +281,28 @@ class PortfolioState(BaseState):
         formatted.sort(key=lambda x: _sort_key_for_column(x, sort_col), reverse=not ascending)
         return formatted
     
+    # Filtered views: separate index funds/ETFs from individual positions
+    
+    @rx.var
+    def selected_account_index_fund_holdings(self) -> list[dict]:
+        """Stock holdings filtered to only index funds and sector ETFs."""
+        return [h for h in self.selected_account_stock_holdings if is_index_fund(h["symbol"])]
+    
+    @rx.var
+    def selected_account_individual_stock_holdings(self) -> list[dict]:
+        """Stock holdings filtered to exclude index funds and sector ETFs."""
+        return [h for h in self.selected_account_stock_holdings if not is_index_fund(h["symbol"])]
+    
+    @rx.var
+    def selected_account_index_fund_options(self) -> list[dict]:
+        """Options holdings filtered to only index funds and sector ETFs."""
+        return [h for h in self.selected_account_option_holdings if is_index_fund(h["symbol"])]
+    
+    @rx.var
+    def selected_account_individual_options(self) -> list[dict]:
+        """Options holdings filtered to exclude index funds and sector ETFs."""
+        return [h for h in self.selected_account_option_holdings if not is_index_fund(h["symbol"])]
+    
     @rx.var
     def selected_account_balance(self) -> str:
         # Sum both stocks and options
@@ -283,7 +350,7 @@ class PortfolioState(BaseState):
         if prev_close <= 0:
             return 0.0
         
-        return ((equity - prev_close) / prev_close) * 100
+        return float(((equity - prev_close) / prev_close) * 100)
 
     @rx.var
     def benchmark_comparison(self) -> str:
@@ -297,7 +364,7 @@ class PortfolioState(BaseState):
     @rx.var
     def beating_benchmark(self) -> bool:
         """True if portfolio is outperforming S&P 500 today."""
-        return self.selected_account_daily_pct >= self.sp500_daily_change_pct
+        return bool(self.selected_account_daily_pct >= self.sp500_daily_change_pct)
 
     @rx.var
     def portfolio_treemap(self) -> go.Figure:
@@ -587,7 +654,7 @@ class PortfolioState(BaseState):
         cache_key = "sp500_daily_pct"
         cached = get_cached(cache_key)
         if cached is not None:
-            return cached
+            return float(cached)
         
         try:
             ticker = yf.Ticker("^GSPC")
@@ -598,7 +665,7 @@ class PortfolioState(BaseState):
             
             current = df['Close'].iloc[-1]
             prev = df['Close'].iloc[-2]
-            pct_change = ((current - prev) / prev) * 100
+            pct_change = float(((current - prev) / prev) * 100)
             
             set_cached(cache_key, pct_change, MARKET_DATA_TTL)
             return pct_change

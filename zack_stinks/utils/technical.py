@@ -4,6 +4,19 @@ import yfinance as yf
 from typing import Optional
 
 
+def normalize_symbol_for_yfinance(symbol: str) -> str:
+    """
+    Convert broker symbol format to yfinance-compatible format.
+    
+    Robinhood uses formats like "$BRK.B" but yfinance expects "BRK-B".
+    """
+    # Remove leading $ if present
+    s = symbol.lstrip("$")
+    # Replace dots with hyphens for share class notation (BRK.B -> BRK-B)
+    s = s.replace(".", "-")
+    return s
+
+
 def calculate_ma(prices: pd.Series, window: int) -> Optional[float]:
     """
     Calculate a simple moving average for the given window.
@@ -59,7 +72,8 @@ def get_stock_ma_data(symbol: str, period: str = "1y") -> dict:
     }
     
     try:
-        ticker = yf.Ticker(symbol)
+        yf_symbol = normalize_symbol_for_yfinance(symbol)
+        ticker = yf.Ticker(yf_symbol)
         df = ticker.history(period=period)
         
         if df.empty:

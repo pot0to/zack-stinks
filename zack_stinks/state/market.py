@@ -1,4 +1,5 @@
 from .base import BaseState
+from .portfolio import is_index_fund
 import reflex as rx
 import asyncio
 import plotly.graph_objects as go
@@ -15,6 +16,31 @@ class MarketState(BaseState):
     # Track portfolio spotlight loading state
     portfolio_signals_loading: bool = False
     portfolio_data_available: bool = False
+
+    # Filtered views: separate index funds/ETFs from individual positions
+    @rx.var
+    def index_fund_gap_events(self) -> list[dict]:
+        return [e for e in self.gap_events if is_index_fund(e.get("symbol", ""))]
+    
+    @rx.var
+    def individual_gap_events(self) -> list[dict]:
+        return [e for e in self.gap_events if not is_index_fund(e.get("symbol", ""))]
+    
+    @rx.var
+    def index_fund_ma_proximity_events(self) -> list[dict]:
+        return [e for e in self.ma_proximity_events if is_index_fund(e.get("symbol", ""))]
+    
+    @rx.var
+    def individual_ma_proximity_events(self) -> list[dict]:
+        return [e for e in self.ma_proximity_events if not is_index_fund(e.get("symbol", ""))]
+    
+    @rx.var
+    def index_fund_below_ma_200_events(self) -> list[dict]:
+        return [e for e in self.below_ma_200_events if is_index_fund(e.get("symbol", ""))]
+    
+    @rx.var
+    def individual_below_ma_200_events(self) -> list[dict]:
+        return [e for e in self.below_ma_200_events if not is_index_fund(e.get("symbol", ""))]
 
     async def setup_market_page(self):
         """Setup market page - validate session and fetch data.

@@ -149,7 +149,7 @@ def sidebar() -> rx.Component:
             # Header with toggle
             rx.hstack(
                 rx.button(
-                    rx.icon(tag="menu", size=24),
+                    rx.icon(tag="menu", size=24, color=rx.color("gray", 11)),
                     on_click=State.toggle_sidebar,
                     background="transparent",
                     _hover={"background": rx.color("gray", 4)},

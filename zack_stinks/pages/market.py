@@ -158,64 +158,196 @@ def _portfolio_spotlight() -> rx.Component:
     )
 
 
+def _gap_table_header() -> rx.Component:
+    """Reusable header for gap events tables."""
+    return rx.table.header(
+        rx.table.row(
+            rx.table.column_header_cell("Ticker"),
+            rx.table.column_header_cell("Type"),
+            rx.table.column_header_cell("% Change"),
+            rx.table.column_header_cell("Volume"),
+        ),
+    )
+
+
 def _gap_events_content() -> rx.Component:
-    """Gap events tab content."""
+    """Gap events tab content, separated by index funds vs individual stocks."""
+    no_events = rx.text("No gap events detected in portfolio holdings.", color="gray", size="2")
+    
     return rx.cond(
         MarketState.gap_events.length() > 0,
-        rx.table.root(
-            rx.table.header(
-                rx.table.row(
-                    rx.table.column_header_cell("Ticker"),
-                    rx.table.column_header_cell("Type"),
-                    rx.table.column_header_cell("% Change"),
-                    rx.table.column_header_cell("Volume"),
+        rx.vstack(
+            # Index Funds section
+            rx.cond(
+                MarketState.index_fund_gap_events.length() > 0,
+                rx.vstack(
+                    rx.hstack(
+                        rx.icon("layers", size=14, color="blue"),
+                        rx.text("Index Funds & ETFs", weight="medium", size="2"),
+                        spacing="2",
+                        align_items="center",
+                    ),
+                    rx.table.root(
+                        _gap_table_header(),
+                        rx.table.body(rx.foreach(MarketState.index_fund_gap_events, _gap_event_row)),
+                        width="100%",
+                    ),
+                    width="100%",
+                    margin_bottom="1.5em",
                 ),
+                rx.fragment(),
             ),
-            rx.table.body(rx.foreach(MarketState.gap_events, _gap_event_row)),
+            # Individual Stocks section
+            rx.cond(
+                MarketState.individual_gap_events.length() > 0,
+                rx.vstack(
+                    rx.hstack(
+                        rx.icon("building-2", size=14, color="green"),
+                        rx.text("Individual Stocks", weight="medium", size="2"),
+                        spacing="2",
+                        align_items="center",
+                    ),
+                    rx.table.root(
+                        _gap_table_header(),
+                        rx.table.body(rx.foreach(MarketState.individual_gap_events, _gap_event_row)),
+                        width="100%",
+                    ),
+                    width="100%",
+                ),
+                rx.fragment(),
+            ),
             width="100%",
         ),
-        rx.text("No gap events detected in portfolio holdings.", color="gray", size="2"),
+        no_events,
+    )
+
+
+def _ma_proximity_table_header() -> rx.Component:
+    """Reusable header for MA proximity tables."""
+    return rx.table.header(
+        rx.table.row(
+            rx.table.column_header_cell("Ticker"),
+            rx.table.column_header_cell("Price"),
+            rx.table.column_header_cell("MA Value"),
+            rx.table.column_header_cell("Offset"),
+        ),
     )
 
 
 def _ma_proximity_content() -> rx.Component:
-    """MA proximity tab content."""
+    """MA proximity tab content, separated by index funds vs individual stocks."""
+    no_events = rx.text("No positions near key moving averages.", color="gray", size="2")
+    
     return rx.cond(
         MarketState.ma_proximity_events.length() > 0,
-        rx.table.root(
-            rx.table.header(
-                rx.table.row(
-                    rx.table.column_header_cell("Ticker"),
-                    rx.table.column_header_cell("Price"),
-                    rx.table.column_header_cell("MA Value"),
-                    rx.table.column_header_cell("Offset"),
+        rx.vstack(
+            # Index Funds section
+            rx.cond(
+                MarketState.index_fund_ma_proximity_events.length() > 0,
+                rx.vstack(
+                    rx.hstack(
+                        rx.icon("layers", size=14, color="blue"),
+                        rx.text("Index Funds & ETFs", weight="medium", size="2"),
+                        spacing="2",
+                        align_items="center",
+                    ),
+                    rx.table.root(
+                        _ma_proximity_table_header(),
+                        rx.table.body(rx.foreach(MarketState.index_fund_ma_proximity_events, _ma_proximity_row)),
+                        width="100%",
+                    ),
+                    width="100%",
+                    margin_bottom="1.5em",
                 ),
+                rx.fragment(),
             ),
-            rx.table.body(rx.foreach(MarketState.ma_proximity_events, _ma_proximity_row)),
+            # Individual Stocks section
+            rx.cond(
+                MarketState.individual_ma_proximity_events.length() > 0,
+                rx.vstack(
+                    rx.hstack(
+                        rx.icon("building-2", size=14, color="green"),
+                        rx.text("Individual Stocks", weight="medium", size="2"),
+                        spacing="2",
+                        align_items="center",
+                    ),
+                    rx.table.root(
+                        _ma_proximity_table_header(),
+                        rx.table.body(rx.foreach(MarketState.individual_ma_proximity_events, _ma_proximity_row)),
+                        width="100%",
+                    ),
+                    width="100%",
+                ),
+                rx.fragment(),
+            ),
             width="100%",
         ),
-        rx.text("No positions near key moving averages.", color="gray", size="2"),
+        no_events,
+    )
+
+
+def _below_ma_table_header() -> rx.Component:
+    """Reusable header for below 200d MA tables."""
+    return rx.table.header(
+        rx.table.row(
+            rx.table.column_header_cell("Ticker"),
+            rx.table.column_header_cell("Price"),
+            rx.table.column_header_cell("200d MA"),
+            rx.table.column_header_cell("% Below"),
+            rx.table.column_header_cell("Accounts"),
+        ),
     )
 
 
 def _below_ma_content() -> rx.Component:
-    """Below 200-day MA tab content."""
+    """Below 200-day MA tab content, separated by index funds vs individual stocks."""
+    no_events = rx.text("No holdings currently below their 200-day moving average.", color="gray", size="2")
+    
     return rx.cond(
         MarketState.below_ma_200_events.length() > 0,
-        rx.table.root(
-            rx.table.header(
-                rx.table.row(
-                    rx.table.column_header_cell("Ticker"),
-                    rx.table.column_header_cell("Price"),
-                    rx.table.column_header_cell("200d MA"),
-                    rx.table.column_header_cell("% Below"),
-                    rx.table.column_header_cell("Accounts"),
+        rx.vstack(
+            # Index Funds section
+            rx.cond(
+                MarketState.index_fund_below_ma_200_events.length() > 0,
+                rx.vstack(
+                    rx.hstack(
+                        rx.icon("layers", size=14, color="blue"),
+                        rx.text("Index Funds & ETFs", weight="medium", size="2"),
+                        spacing="2",
+                        align_items="center",
+                    ),
+                    rx.table.root(
+                        _below_ma_table_header(),
+                        rx.table.body(rx.foreach(MarketState.index_fund_below_ma_200_events, _below_ma_row)),
+                        width="100%",
+                    ),
+                    width="100%",
+                    margin_bottom="1.5em",
                 ),
+                rx.fragment(),
             ),
-            rx.table.body(rx.foreach(MarketState.below_ma_200_events, _below_ma_row)),
+            # Individual Stocks section
+            rx.cond(
+                MarketState.individual_below_ma_200_events.length() > 0,
+                rx.vstack(
+                    rx.hstack(
+                        rx.icon("building-2", size=14, color="green"),
+                        rx.text("Individual Stocks", weight="medium", size="2"),
+                        spacing="2",
+                        align_items="center",
+                    ),
+                    rx.table.root(
+                        _below_ma_table_header(),
+                        rx.table.body(rx.foreach(MarketState.individual_below_ma_200_events, _below_ma_row)),
+                        width="100%",
+                    ),
+                    width="100%",
+                ),
+                rx.fragment(),
+            ),
             width="100%",
         ),
-        rx.text("No holdings currently below their 200-day moving average.", color="gray", size="2"),
+        no_events,
     )
 
 

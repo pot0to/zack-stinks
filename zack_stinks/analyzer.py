@@ -1,4 +1,5 @@
 import yfinance as yf
+from .utils.technical import normalize_symbol_for_yfinance
 
 class StockAnalyzer:
     def __init__(self):
@@ -76,7 +77,8 @@ class StockAnalyzer:
         
         for symbol in symbols:
             try:
-                ticker = yf.Ticker(symbol)
+                yf_symbol = normalize_symbol_for_yfinance(symbol)
+                ticker = yf.Ticker(yf_symbol)
                 # Fetch 5 days to ensure we have at least 2 trading days
                 df = ticker.history(period="5d")
                 

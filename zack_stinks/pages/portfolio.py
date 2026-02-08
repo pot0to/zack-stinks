@@ -175,29 +175,72 @@ def _sortable_stock_header(label: str, sort_key: str) -> rx.Component:
     )
 
 
+def _stock_table_header() -> rx.Component:
+    """Reusable header row for stock tables."""
+    return rx.table.header(
+        rx.table.row(
+            _sortable_stock_header("Symbol", "symbol"),
+            _sortable_stock_header("Price", "price_raw"),
+            _sortable_stock_header("Shares", "shares_raw"),
+            _sortable_stock_header("Market Value", "value_raw"),
+            _sortable_stock_header("Avg Cost", "avg_cost_raw"),
+            _sortable_stock_header("P/L ($)", "pl_raw"),
+            _sortable_stock_header("P/L (%)", "pl_pct_raw"),
+            _sortable_stock_header("Portfolio %", "allocation_raw"),
+        ),
+    )
+
+
 def _stock_holdings_table() -> rx.Component:
-    """Stock holdings detail table."""
+    """Stock holdings detail tables, separated by index funds vs individual stocks."""
     return rx.vstack(
-        rx.text("Holdings Detail", weight="bold", margin_top="2em", size="4"),
-        rx.table.root(
-            rx.table.header(
-                rx.table.row(
-                    _sortable_stock_header("Symbol", "symbol"),
-                    _sortable_stock_header("Price", "price_raw"),
-                    _sortable_stock_header("Shares", "shares_raw"),
-                    _sortable_stock_header("Market Value", "value_raw"),
-                    _sortable_stock_header("Avg Cost", "avg_cost_raw"),
-                    _sortable_stock_header("P/L ($)", "pl_raw"),
-                    _sortable_stock_header("P/L (%)", "pl_pct_raw"),
-                    _sortable_stock_header("Portfolio %", "allocation_raw"),
+        # Index Funds & ETFs section
+        rx.cond(
+            PortfolioState.selected_account_index_fund_holdings.length() > 0,
+            rx.vstack(
+                rx.hstack(
+                    rx.icon("layers", size=16, color="blue"),
+                    rx.text("Index Funds & ETFs", weight="bold", size="4"),
+                    spacing="2",
+                    align_items="center",
+                    margin_top="2em",
                 ),
+                rx.table.root(
+                    _stock_table_header(),
+                    rx.table.body(
+                        rx.foreach(PortfolioState.selected_account_index_fund_holdings, _stock_row),
+                    ),
+                    width="100%",
+                    variant="surface",
+                    margin_top="1em",
+                ),
+                width="100%",
             ),
-            rx.table.body(
-                rx.foreach(PortfolioState.selected_account_stock_holdings, _stock_row),
+            rx.fragment(),
+        ),
+        # Individual Stocks section
+        rx.cond(
+            PortfolioState.selected_account_individual_stock_holdings.length() > 0,
+            rx.vstack(
+                rx.hstack(
+                    rx.icon("building-2", size=16, color="green"),
+                    rx.text("Individual Stocks", weight="bold", size="4"),
+                    spacing="2",
+                    align_items="center",
+                    margin_top="2em",
+                ),
+                rx.table.root(
+                    _stock_table_header(),
+                    rx.table.body(
+                        rx.foreach(PortfolioState.selected_account_individual_stock_holdings, _stock_row),
+                    ),
+                    width="100%",
+                    variant="surface",
+                    margin_top="1em",
+                ),
+                width="100%",
             ),
-            width="100%",
-            variant="surface",
-            margin_top="1em",
+            rx.fragment(),
         ),
         width="100%",
     )
@@ -267,33 +310,76 @@ def _sortable_options_header(label: str, sort_key: str) -> rx.Component:
     )
 
 
+def _options_table_header() -> rx.Component:
+    """Reusable header row for options tables."""
+    return rx.table.header(
+        rx.table.row(
+            _sortable_options_header("Symbol", "symbol"),
+            _sortable_options_header("Strike", "strike_raw"),
+            _sortable_options_header("Type", "option_type"),
+            _sortable_options_header("Side", "side"),
+            _sortable_options_header("DTE", "dte_raw"),
+            _sortable_options_header("Underlying", "underlying_raw"),
+            _sortable_options_header("Delta", "delta_raw"),
+            _sortable_options_header("Cost Basis", "cost_basis_raw"),
+            _sortable_options_header("Current Value", "current_value_raw"),
+            _sortable_options_header("P/L ($)", "pl_raw"),
+            _sortable_options_header("P/L (%)", "pl_pct_raw"),
+            _sortable_options_header("Weight", "weight_raw"),
+        ),
+    )
+
+
 def _options_holdings_table() -> rx.Component:
-    """Options holdings detail table."""
+    """Options holdings detail tables, separated by index funds vs individual stocks."""
     return rx.vstack(
-        rx.text("Options Detail", weight="bold", margin_top="2em", size="4"),
-        rx.table.root(
-            rx.table.header(
-                rx.table.row(
-                    _sortable_options_header("Symbol", "symbol"),
-                    _sortable_options_header("Strike", "strike_raw"),
-                    _sortable_options_header("Type", "option_type"),
-                    _sortable_options_header("Side", "side"),
-                    _sortable_options_header("DTE", "dte_raw"),
-                    _sortable_options_header("Underlying", "underlying_raw"),
-                    _sortable_options_header("Delta", "delta_raw"),
-                    _sortable_options_header("Cost Basis", "cost_basis_raw"),
-                    _sortable_options_header("Current Value", "current_value_raw"),
-                    _sortable_options_header("P/L ($)", "pl_raw"),
-                    _sortable_options_header("P/L (%)", "pl_pct_raw"),
-                    _sortable_options_header("Weight", "weight_raw"),
+        # Index Fund / ETF Options section
+        rx.cond(
+            PortfolioState.selected_account_index_fund_options.length() > 0,
+            rx.vstack(
+                rx.hstack(
+                    rx.icon("layers", size=16, color="blue"),
+                    rx.text("Index Fund & ETF Options", weight="bold", size="4"),
+                    spacing="2",
+                    align_items="center",
+                    margin_top="2em",
                 ),
+                rx.table.root(
+                    _options_table_header(),
+                    rx.table.body(
+                        rx.foreach(PortfolioState.selected_account_index_fund_options, _options_row),
+                    ),
+                    width="100%",
+                    variant="surface",
+                    margin_top="1em",
+                ),
+                width="100%",
             ),
-            rx.table.body(
-                rx.foreach(PortfolioState.selected_account_option_holdings, _options_row),
+            rx.fragment(),
+        ),
+        # Individual Stock Options section
+        rx.cond(
+            PortfolioState.selected_account_individual_options.length() > 0,
+            rx.vstack(
+                rx.hstack(
+                    rx.icon("building-2", size=16, color="green"),
+                    rx.text("Individual Stock Options", weight="bold", size="4"),
+                    spacing="2",
+                    align_items="center",
+                    margin_top="2em",
+                ),
+                rx.table.root(
+                    _options_table_header(),
+                    rx.table.body(
+                        rx.foreach(PortfolioState.selected_account_individual_options, _options_row),
+                    ),
+                    width="100%",
+                    variant="surface",
+                    margin_top="1em",
+                ),
+                width="100%",
             ),
-            width="100%",
-            variant="surface",
-            margin_top="1em",
+            rx.fragment(),
         ),
         width="100%",
     )
