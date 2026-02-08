@@ -5,20 +5,6 @@ from ..components.cards import metric_card
 from ..state import PortfolioState, State
 
 
-def _masked_value(value: rx.Var, mask_digits: bool = True) -> rx.Component:
-    """Display value with optional masking when hide_portfolio_values is enabled.
-    
-    When masked, replaces digits with asterisks for privacy during screen sharing.
-    """
-    if mask_digits:
-        return rx.cond(
-            State.hide_portfolio_values,
-            rx.text(value.to(str).replace("0", "*").replace("1", "*").replace("2", "*").replace("3", "*").replace("4", "*").replace("5", "*").replace("6", "*").replace("7", "*").replace("8", "*").replace("9", "*")),
-            rx.text(value),
-        )
-    return rx.text(value)
-
-
 def portfolio_page() -> rx.Component:
     """Portfolio page with shared layout."""
     return page_layout(_portfolio_content(), use_container=False)
@@ -83,19 +69,20 @@ def _portfolio_content() -> rx.Component:
 
 def _stats_header() -> rx.Component:
     """Portfolio stats header with key metrics and privacy masking."""
-    def masked(val):
-        """Mask digits when privacy mode is enabled."""
-        str_val = val.to(str)
-        masked_str = str_val.replace("0", "*").replace("1", "*").replace("2", "*").replace("3", "*").replace("4", "*").replace("5", "*").replace("6", "*").replace("7", "*").replace("8", "*").replace("9", "*")
-        return rx.cond(State.hide_portfolio_values, masked_str, str_val)
+    # Use fixed-length masks that approximate typical value widths
+    MASK_DOLLAR = "********"  # ~$12,345.67
+    MASK_PERCENT = "*****"    # ~+12.34%
     
     return rx.grid(
         rx.card(
             rx.vstack(
                 rx.text("Total Portfolio Value", size="2", color="gray", weight="medium"),
-                rx.heading(masked(PortfolioState.selected_account_balance), size="7"),
+                rx.heading(
+                    rx.cond(State.hide_portfolio_values, MASK_DOLLAR, PortfolioState.selected_account_balance),
+                    size="7"
+                ),
                 rx.badge(
-                    masked(PortfolioState.selected_account_change),
+                    rx.cond(State.hide_portfolio_values, MASK_PERCENT, PortfolioState.selected_account_change),
                     color_scheme=rx.cond(
                         PortfolioState.selected_account_change.contains("-"), "red", "green"
                     ),
@@ -109,7 +96,10 @@ def _stats_header() -> rx.Component:
         rx.card(
             rx.vstack(
                 rx.text("Cash Balance", size="2", color="gray", weight="medium"),
-                rx.heading(masked(PortfolioState.cash_balance), size="7"),
+                rx.heading(
+                    rx.cond(State.hide_portfolio_values, MASK_DOLLAR, PortfolioState.cash_balance),
+                    size="7"
+                ),
                 rx.text("Available to withdraw", size="1", color="slate"),
                 align_items="start",
                 spacing="1",
@@ -118,7 +108,10 @@ def _stats_header() -> rx.Component:
         rx.card(
             rx.vstack(
                 rx.text("Buying Power", size="2", color="gray", weight="medium"),
-                rx.heading(masked(PortfolioState.buying_power), size="7"),
+                rx.heading(
+                    rx.cond(State.hide_portfolio_values, MASK_DOLLAR, PortfolioState.buying_power),
+                    size="7"
+                ),
                 rx.text("Total margin & cash", size="1", color="slate"),
                 align_items="start",
                 spacing="1",
@@ -199,34 +192,42 @@ def _stock_holdings_table() -> rx.Component:
 
 
 def _stock_row(h: dict) -> rx.Component:
-    """Individual stock holding row with privacy masking support."""
-    def masked(val):
-        """Mask digits when privacy mode is enabled."""
-        str_val = val.to(str)
-        masked_str = str_val.replace("0", "*").replace("1", "*").replace("2", "*").replace("3", "*").replace("4", "*").replace("5", "*").replace("6", "*").replace("7", "*").replace("8", "*").replace("9", "*")
-        return rx.cond(State.hide_portfolio_values, masked_str, str_val)
+    """Individual stock holding row with privacy masking support.
+    
+    Only position-specific values are masked (shares, value, cost, P/L, allocation).
+    Current price is market data and not masked.
+    """
+    # Fixed-length masks approximating typical value widths
+    MASK_SHARES = "******"    # ~123.4567
+    MASK_DOLLAR = "********"  # ~$12,345.67
+    MASK_PERCENT = "*****"    # ~12.34%
     
     return rx.table.row(
         rx.table.cell(rx.text(h["symbol"], weight="bold")),
-        rx.table.cell(masked(h["price"])),
-        rx.table.cell(masked(h["shares"])),
-        rx.table.cell(masked(h["value"])),
-        rx.table.cell(rx.text(masked(h["avg_cost"]), color=rx.cond(h["cost_basis_reliable"], "inherit", "gray"))),
+        rx.table.cell(h["price"]),  # Market price - not masked
+        rx.table.cell(rx.cond(State.hide_portfolio_values, MASK_SHARES, h["shares"])),
+        rx.table.cell(rx.cond(State.hide_portfolio_values, MASK_DOLLAR, h["value"])),
         rx.table.cell(
             rx.text(
-                masked(h["pl_formatted"]),
+                rx.cond(State.hide_portfolio_values, MASK_DOLLAR, h["avg_cost"]),
+                color=rx.cond(h["cost_basis_reliable"], "inherit", "gray")
+            )
+        ),
+        rx.table.cell(
+            rx.text(
+                rx.cond(State.hide_portfolio_values, MASK_DOLLAR, h["pl_formatted"]),
                 color=rx.cond(h["cost_basis_reliable"], rx.cond(h["pl_positive"], "green", "red"), "gray"),
                 weight="medium",
             )
         ),
         rx.table.cell(
             rx.text(
-                masked(h["pl_pct_formatted"]),
+                rx.cond(State.hide_portfolio_values, MASK_PERCENT, h["pl_pct_formatted"]),
                 color=rx.cond(h["cost_basis_reliable"], rx.cond(h["pl_positive"], "green", "red"), "gray"),
                 weight="medium",
             )
         ),
-        rx.table.cell(masked(h["allocation"])),
+        rx.table.cell(rx.cond(State.hide_portfolio_values, MASK_PERCENT, h["allocation"])),
     )
 
 
@@ -284,12 +285,14 @@ def _options_holdings_table() -> rx.Component:
 
 
 def _options_row(h: dict) -> rx.Component:
-    """Individual options holding row with privacy masking support."""
-    def masked(val):
-        """Mask digits when privacy mode is enabled."""
-        str_val = val.to(str)
-        masked_str = str_val.replace("0", "*").replace("1", "*").replace("2", "*").replace("3", "*").replace("4", "*").replace("5", "*").replace("6", "*").replace("7", "*").replace("8", "*").replace("9", "*")
-        return rx.cond(State.hide_portfolio_values, masked_str, str_val)
+    """Individual options holding row with privacy masking support.
+    
+    Only position-specific values are masked (cost basis, current value, P/L, weight).
+    Strike, underlying price, delta, and DTE are market data and not masked.
+    """
+    # Fixed-length masks approximating typical value widths
+    MASK_DOLLAR = "********"  # ~$12,345.67
+    MASK_PERCENT = "*****"    # ~12.34%
     
     return rx.table.row(
         rx.table.cell(
@@ -303,7 +306,7 @@ def _options_row(h: dict) -> rx.Component:
                 spacing="2",
             )
         ),
-        rx.table.cell(masked(h["strike"])),
+        rx.table.cell(h["strike"]),  # Market data - not masked
         rx.table.cell(
             rx.badge(h["option_type"], color_scheme=rx.cond(h["option_type"] == "Call", "blue", "purple"), variant="soft")
         ),
@@ -311,17 +314,25 @@ def _options_row(h: dict) -> rx.Component:
             rx.badge(h["side"], color_scheme=rx.cond(h["is_short"], "orange", "green"), variant="soft")
         ),
         rx.table.cell(h["dte"]),
-        rx.table.cell(masked(h["underlying"])),
-        rx.table.cell(masked(h["delta"])),
-        rx.table.cell(masked(h["cost_basis"])),
-        rx.table.cell(masked(h["current_value"])),
+        rx.table.cell(h["underlying"]),  # Market data - not masked
+        rx.table.cell(h["delta"]),  # Market data - not masked
+        rx.table.cell(rx.cond(State.hide_portfolio_values, MASK_DOLLAR, h["cost_basis"])),
+        rx.table.cell(rx.cond(State.hide_portfolio_values, MASK_DOLLAR, h["current_value"])),
         rx.table.cell(
-            rx.text(masked(h["pl_formatted"]), color=rx.cond(h["pl_positive"], "green", "red"), weight="medium")
+            rx.text(
+                rx.cond(State.hide_portfolio_values, MASK_DOLLAR, h["pl_formatted"]),
+                color=rx.cond(h["pl_positive"], "green", "red"),
+                weight="medium"
+            )
         ),
         rx.table.cell(
-            rx.text(masked(h["pl_pct_formatted"]), color=rx.cond(h["pl_positive"], "green", "red"), weight="medium")
+            rx.text(
+                rx.cond(State.hide_portfolio_values, MASK_PERCENT, h["pl_pct_formatted"]),
+                color=rx.cond(h["pl_positive"], "green", "red"),
+                weight="medium"
+            )
         ),
-        rx.table.cell(masked(h["weight"])),
+        rx.table.cell(rx.cond(State.hide_portfolio_values, MASK_PERCENT, h["weight"])),
     )
 
 

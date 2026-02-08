@@ -1,6 +1,5 @@
 import reflex as rx
 import asyncio
-import re
 from datetime import datetime
 import robin_stocks.robinhood as rs
 import plotly.graph_objects as go
@@ -9,11 +8,6 @@ from .base import BaseState
 from ..utils.cache import get_cached, set_cached, PORTFOLIO_TTL
 
 SHARES_PER_CONTRACT = 100
-
-
-def _mask_value(value: str) -> str:
-    """Replace digits with asterisks for privacy mode."""
-    return re.sub(r'\d', '*', value)
 
 
 class PortfolioState(BaseState):
@@ -303,7 +297,10 @@ class PortfolioState(BaseState):
                 pl_dollar_str = "N/A"
             
             colors.append(pl_to_color(pl_pct))
-            hover_texts.append(f"${value:,.2f}<br>P/L: {pl_dollar_str} ({pl_pct_str})")
+            if self.hide_portfolio_values:
+                hover_texts.append("*****<br>P/L: *****")
+            else:
+                hover_texts.append(f"${value:,.2f}<br>P/L: {pl_dollar_str} ({pl_pct_str})")
         
         # Add options aggregated by ticker symbol
         options_by_symbol: dict[str, dict] = {}
@@ -335,7 +332,10 @@ class PortfolioState(BaseState):
                 pl_dollar_str = "N/A"
             
             colors.append(pl_to_color(pl_pct))
-            hover_texts.append(f"${data['value']:,.2f}<br>P/L: {pl_dollar_str} ({pl_pct_str})")
+            if self.hide_portfolio_values:
+                hover_texts.append("*****<br>P/L: *****")
+            else:
+                hover_texts.append(f"${data['value']:,.2f}<br>P/L: {pl_dollar_str} ({pl_pct_str})")
 
         fig = go.Figure(go.Treemap(
             labels=labels,

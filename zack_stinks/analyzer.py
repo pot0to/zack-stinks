@@ -121,9 +121,9 @@ class StockAnalyzer:
                 events.append({
                     "symbol": symbol,
                     "gap_type": gap_type,
-                    "pct_change": round(pct_change, 2),
+                    "pct_change": f"{pct_change:.2f}",
                     "pct_change_val": pct_change,
-                    "volume_ratio": round(volume_ratio, 2),
+                    "volume_ratio": f"{volume_ratio:.2f}",
                     "is_high_volume": str(is_high_volume)
                 })
                 
@@ -165,7 +165,7 @@ class StockAnalyzer:
                             "price": f"${current_price:,.2f}",
                             "ma_type": "50-day MA",
                             "ma_value": f"${ma_data['ma_50']:,.2f}",
-                            "pct_offset": round(pct_offset, 2),
+                            "pct_offset": f"{pct_offset:+.2f}",
                             "pct_offset_val": pct_offset,
                             "abs_offset": abs(pct_offset)
                         })
@@ -179,7 +179,7 @@ class StockAnalyzer:
                             "price": f"${current_price:,.2f}",
                             "ma_type": "200-day MA",
                             "ma_value": f"${ma_data['ma_200']:,.2f}",
-                            "pct_offset": round(pct_offset, 2),
+                            "pct_offset": f"{pct_offset:+.2f}",
                             "pct_offset_val": pct_offset,
                             "abs_offset": abs(pct_offset)
                         })
@@ -221,7 +221,7 @@ class StockAnalyzer:
                     "symbol": symbol,
                     "price": f"${current_price:,.2f}",
                     "ma_200_value": f"${ma_data['ma_200']:,.2f}",
-                    "pct_below": round(pct_from_200, 2),
+                    "pct_below": f"{pct_from_200:.2f}",
                     "pct_below_val": pct_from_200,
                     "accounts": ", ".join(accounts) if accounts else "Unknown",
                 })
