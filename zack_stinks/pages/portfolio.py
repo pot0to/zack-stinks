@@ -240,7 +240,17 @@ def _options_holdings_table() -> rx.Component:
 def _options_row(h: dict) -> rx.Component:
     """Individual options holding row."""
     return rx.table.row(
-        rx.table.cell(rx.text(h["symbol"], weight="bold")),
+        rx.table.cell(
+            rx.hstack(
+                rx.text(h["symbol"], weight="bold"),
+                rx.cond(
+                    h["is_itm"],
+                    rx.badge("ITM", color_scheme="yellow", variant="soft"),
+                    rx.fragment(),
+                ),
+                spacing="2",
+            )
+        ),
         rx.table.cell(h["strike"]),
         rx.table.cell(
             rx.badge(h["option_type"], color_scheme=rx.cond(h["option_type"] == "Call", "blue", "purple"), variant="soft")
@@ -260,7 +270,6 @@ def _options_row(h: dict) -> rx.Component:
             rx.text(h["pl_pct_formatted"], color=rx.cond(h["pl_positive"], "green", "red"), weight="medium")
         ),
         rx.table.cell(h["weight"]),
-        background_color=rx.cond(h["is_itm"], "rgba(250, 204, 21, 0.15)", "transparent"),
     )
 
 
