@@ -1,4 +1,7 @@
-"""Portfolio page UI."""
+"""Portfolio page UI.
+
+Displays user's Robinhood portfolio with holdings, options, and performance metrics.
+"""
 import reflex as rx
 from ..components.layout import page_layout
 from ..components.cards import metric_card
@@ -84,7 +87,9 @@ def _stats_header() -> rx.Component:
                 rx.badge(
                     rx.cond(State.hide_portfolio_values, MASK_PERCENT, PortfolioState.selected_account_change),
                     color_scheme=rx.cond(
-                        PortfolioState.selected_account_change.contains("-"), "red", "green"
+                        State.hide_portfolio_values,
+                        "gray",
+                        rx.cond(PortfolioState.selected_account_change.contains("-"), "red", "green")
                     ),
                     variant="soft",
                     size="2",
@@ -216,14 +221,22 @@ def _stock_row(h: dict) -> rx.Component:
         rx.table.cell(
             rx.text(
                 rx.cond(State.hide_portfolio_values, MASK_DOLLAR, h["pl_formatted"]),
-                color=rx.cond(h["cost_basis_reliable"], rx.cond(h["pl_positive"], "green", "red"), "gray"),
+                color=rx.cond(
+                    State.hide_portfolio_values,
+                    "gray",
+                    rx.cond(h["cost_basis_reliable"], rx.cond(h["pl_positive"], "green", "red"), "gray")
+                ),
                 weight="medium",
             )
         ),
         rx.table.cell(
             rx.text(
                 rx.cond(State.hide_portfolio_values, MASK_PERCENT, h["pl_pct_formatted"]),
-                color=rx.cond(h["cost_basis_reliable"], rx.cond(h["pl_positive"], "green", "red"), "gray"),
+                color=rx.cond(
+                    State.hide_portfolio_values,
+                    "gray",
+                    rx.cond(h["cost_basis_reliable"], rx.cond(h["pl_positive"], "green", "red"), "gray")
+                ),
                 weight="medium",
             )
         ),
@@ -287,12 +300,13 @@ def _options_holdings_table() -> rx.Component:
 def _options_row(h: dict) -> rx.Component:
     """Individual options holding row with privacy masking support.
     
-    Only position-specific values are masked (cost basis, current value, P/L, weight).
-    Strike, underlying price, delta, and DTE are market data and not masked.
+    Position-specific values are masked (strike, delta, cost basis, current value, P/L, weight).
+    Underlying price and DTE are market data and not masked.
     """
     # Fixed-length masks approximating typical value widths
     MASK_DOLLAR = "********"  # ~$12,345.67
     MASK_PERCENT = "*****"    # ~12.34%
+    MASK_DELTA = "******"     # ~0.1234
     
     return rx.table.row(
         rx.table.cell(
@@ -306,7 +320,7 @@ def _options_row(h: dict) -> rx.Component:
                 spacing="2",
             )
         ),
-        rx.table.cell(h["strike"]),  # Market data - not masked
+        rx.table.cell(rx.cond(State.hide_portfolio_values, MASK_DOLLAR, h["strike"])),
         rx.table.cell(
             rx.badge(h["option_type"], color_scheme=rx.cond(h["option_type"] == "Call", "blue", "purple"), variant="soft")
         ),
@@ -315,20 +329,20 @@ def _options_row(h: dict) -> rx.Component:
         ),
         rx.table.cell(h["dte"]),
         rx.table.cell(h["underlying"]),  # Market data - not masked
-        rx.table.cell(h["delta"]),  # Market data - not masked
+        rx.table.cell(rx.cond(State.hide_portfolio_values, MASK_DELTA, h["delta"])),
         rx.table.cell(rx.cond(State.hide_portfolio_values, MASK_DOLLAR, h["cost_basis"])),
         rx.table.cell(rx.cond(State.hide_portfolio_values, MASK_DOLLAR, h["current_value"])),
         rx.table.cell(
             rx.text(
                 rx.cond(State.hide_portfolio_values, MASK_DOLLAR, h["pl_formatted"]),
-                color=rx.cond(h["pl_positive"], "green", "red"),
+                color=rx.cond(State.hide_portfolio_values, "gray", rx.cond(h["pl_positive"], "green", "red")),
                 weight="medium"
             )
         ),
         rx.table.cell(
             rx.text(
                 rx.cond(State.hide_portfolio_values, MASK_PERCENT, h["pl_pct_formatted"]),
-                color=rx.cond(h["pl_positive"], "green", "red"),
+                color=rx.cond(State.hide_portfolio_values, "gray", rx.cond(h["pl_positive"], "green", "red")),
                 weight="medium"
             )
         ),
