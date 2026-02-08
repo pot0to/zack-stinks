@@ -68,17 +68,21 @@ pip install -r requirements.txt
 
 **Windows:**
 ```powershell
-# Install Python from https://www.python.org/downloads/ (3.11+)
+# 1. Install Python from https://www.python.org/downloads/ (3.11+)
+#    During installation, check "Add Python to PATH"
 
-# Clone the repository
+# 2. Install Git from https://git-scm.com/download/win
+#    Use default options during installation
+
+# 3. Open PowerShell or Command Prompt, then clone the repository
 git clone https://github.com/pot0to/zack-stinks.git
 cd zack-stinks
 
-# Create virtual environment
+# 4. Create virtual environment
 python -m venv .venv
 .venv\Scripts\activate
 
-# Install dependencies
+# 5. Install dependencies
 pip install -r requirements.txt
 ```
 
