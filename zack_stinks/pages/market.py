@@ -121,10 +121,20 @@ def _portfolio_spotlight() -> rx.Component:
                 ),
                 value="below_ma",
             ),
+            rx.tabs.trigger(
+                rx.hstack(
+                    rx.icon("rocket", size=14),
+                    rx.text("Near ATH"),
+                    spacing="2",
+                    align="center",
+                ),
+                value="near_ath",
+            ),
         ),
         rx.tabs.content(_gap_events_content(), value="gaps", padding_top="1em"),
         rx.tabs.content(_ma_proximity_content(), value="ma_proximity", padding_top="1em"),
         rx.tabs.content(_below_ma_content(), value="below_ma", padding_top="1em"),
+        rx.tabs.content(_near_ath_content(), value="near_ath", padding_top="1em"),
         default_value="gaps",
         width="100%",
     )
@@ -165,7 +175,19 @@ def _gap_table_header() -> rx.Component:
             rx.table.column_header_cell("Ticker"),
             rx.table.column_header_cell("Type"),
             rx.table.column_header_cell("% Change"),
-            rx.table.column_header_cell("Volume"),
+            rx.table.column_header_cell(
+                rx.tooltip(
+                    rx.hstack(
+                        rx.text("Volume"),
+                        rx.icon("info", size=12, color="gray"),
+                        spacing="1",
+                        align="center",
+                    ),
+                    content="Volume ratio compares today's volume to the 50-day average. "
+                            "Values above 1.5x are flagged as high volume, indicating "
+                            "stronger conviction behind the price gap.",
+                )
+            ),
         ),
     )
 
@@ -367,6 +389,90 @@ def _below_ma_row(event: dict) -> rx.Component:
                 weight="medium",
             )
         ),
+        rx.table.cell(
+            rx.text(
+                rx.cond(State.hide_portfolio_values, MASK_ACCOUNTS, event["accounts"]),
+                size="2",
+                color="gray"
+            )
+        ),
+    )
+
+
+def _near_ath_table_header() -> rx.Component:
+    """Reusable header for near 52-week high tables."""
+    return rx.table.header(
+        rx.table.row(
+            rx.table.column_header_cell("Ticker"),
+            rx.table.column_header_cell("Price"),
+            rx.table.column_header_cell("52-Week High"),
+            rx.table.column_header_cell("% From High"),
+            rx.table.column_header_cell("Accounts"),
+        ),
+    )
+
+
+def _near_ath_content() -> rx.Component:
+    """Near 52-week high tab content, separated by index funds vs individual stocks."""
+    no_events = rx.text("No holdings currently within 5% of their 52-week high.", color="gray", size="2")
+    
+    return rx.cond(
+        MarketState.near_ath_events.length() > 0,
+        rx.vstack(
+            # Index Funds section
+            rx.cond(
+                MarketState.index_fund_near_ath_events.length() > 0,
+                rx.vstack(
+                    rx.hstack(
+                        rx.icon("layers", size=14, color="blue"),
+                        rx.text("Index Funds & ETFs", weight="medium", size="2"),
+                        spacing="2",
+                        align_items="center",
+                    ),
+                    rx.table.root(
+                        _near_ath_table_header(),
+                        rx.table.body(rx.foreach(MarketState.index_fund_near_ath_events, _near_ath_row)),
+                        width="100%",
+                    ),
+                    width="100%",
+                    margin_bottom="1.5em",
+                ),
+                rx.fragment(),
+            ),
+            # Individual Stocks section
+            rx.cond(
+                MarketState.individual_near_ath_events.length() > 0,
+                rx.vstack(
+                    rx.hstack(
+                        rx.icon("building-2", size=14, color="green"),
+                        rx.text("Individual Stocks", weight="medium", size="2"),
+                        spacing="2",
+                        align_items="center",
+                    ),
+                    rx.table.root(
+                        _near_ath_table_header(),
+                        rx.table.body(rx.foreach(MarketState.individual_near_ath_events, _near_ath_row)),
+                        width="100%",
+                    ),
+                    width="100%",
+                ),
+                rx.fragment(),
+            ),
+            width="100%",
+        ),
+        no_events,
+    )
+
+
+def _near_ath_row(event: dict) -> rx.Component:
+    """Table row for near all-time high event. Only accounts are masked for privacy."""
+    MASK_ACCOUNTS = "********, ********"
+    
+    return rx.table.row(
+        rx.table.cell(rx.text(event["symbol"], weight="bold")),
+        rx.table.cell(event["price"]),
+        rx.table.cell(event["all_time_high"]),
+        rx.table.cell(rx.text(event["pct_from_ath"], "%")),
         rx.table.cell(
             rx.text(
                 rx.cond(State.hide_portfolio_values, MASK_ACCOUNTS, event["accounts"]),

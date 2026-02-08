@@ -13,6 +13,7 @@ class MarketState(BaseState):
     gap_events: list[dict] = []
     ma_proximity_events: list[dict] = []
     below_ma_200_events: list[dict] = []
+    near_ath_events: list[dict] = []
     # Track portfolio spotlight loading state
     portfolio_signals_loading: bool = False
     portfolio_data_available: bool = False
@@ -41,6 +42,14 @@ class MarketState(BaseState):
     @rx.var
     def individual_below_ma_200_events(self) -> list[dict]:
         return [e for e in self.below_ma_200_events if not is_index_fund(e.get("symbol", ""))]
+    
+    @rx.var
+    def index_fund_near_ath_events(self) -> list[dict]:
+        return [e for e in self.near_ath_events if is_index_fund(e.get("symbol", ""))]
+    
+    @rx.var
+    def individual_near_ath_events(self) -> list[dict]:
+        return [e for e in self.near_ath_events if not is_index_fund(e.get("symbol", ""))]
 
     async def setup_market_page(self):
         """Setup market page - validate session and fetch data.
@@ -92,6 +101,8 @@ class MarketState(BaseState):
         if not portfolio_state.all_stock_holdings:
             self.gap_events = []
             self.ma_proximity_events = []
+            self.below_ma_200_events = []
+            self.near_ath_events = []
             self.portfolio_data_available = False
             self.portfolio_signals_loading = False
             return
@@ -109,29 +120,28 @@ class MarketState(BaseState):
                 self.gap_events = cached["gap_events"]
                 self.ma_proximity_events = cached["ma_proximity_events"]
                 self.below_ma_200_events = cached.get("below_ma_200_events", [])
+                self.near_ath_events = cached.get("near_ath_events", [])
                 self.portfolio_signals_loading = False
                 return
             
-            # Fetch signals in parallel
+            # Fetch all signals in a single batch operation
             analyzer = StockAnalyzer()
-            gap_task = asyncio.to_thread(analyzer.detect_gap_events, symbol_list)
-            ma_task = asyncio.to_thread(analyzer.detect_ma_proximity, symbol_list)
-            below_ma_task = asyncio.to_thread(analyzer.detect_below_ma_200, symbol_list, symbol_accounts)
-            
-            self.gap_events, self.ma_proximity_events, self.below_ma_200_events = await asyncio.gather(
-                gap_task, ma_task, below_ma_task
+            results = await asyncio.to_thread(
+                analyzer.detect_all_signals, symbol_list, symbol_accounts
             )
             
+            self.gap_events = results["gap_events"]
+            self.ma_proximity_events = results["ma_proximity_events"]
+            self.below_ma_200_events = results["below_ma_200_events"]
+            self.near_ath_events = results["near_ath_events"]
+            
             # Cache results
-            set_cached(cache_key, {
-                "gap_events": self.gap_events,
-                "ma_proximity_events": self.ma_proximity_events,
-                "below_ma_200_events": self.below_ma_200_events,
-            }, DEFAULT_TTL)
+            set_cached(cache_key, results, DEFAULT_TTL)
         else:
             self.gap_events = []
             self.ma_proximity_events = []
             self.below_ma_200_events = []
+            self.near_ath_events = []
         
         self.portfolio_signals_loading = False
     
