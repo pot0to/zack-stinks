@@ -7,6 +7,7 @@ import plotly.graph_objects as go
 import pandas as pd
 from .base import BaseState
 from ..utils.auth import get_rh_credentials
+from ..utils.cache import get_cached, set_cached, PORTFOLIO_TTL
 
 SHARES_PER_CONTRACT = 100
 
@@ -335,6 +336,7 @@ class PortfolioState(BaseState):
 
         try:
             # login_info maintains the session globally in the 'rs' module
+            # Always call login to refresh/validate session (it's idempotent with store_session)
             login_info = await asyncio.to_thread(
                 rs.login, 
                 username=creds["username"], 
@@ -344,10 +346,12 @@ class PortfolioState(BaseState):
             )
 
             if login_info and "access_token" in login_info:
-                user_profile = await asyncio.to_thread(rs.account.load_user_profile)
-                self.account_name = user_profile.get("first_name", "User")
+                if not self.is_logged_in:
+                    # Only fetch profile on first login
+                    user_profile = await asyncio.to_thread(rs.account.load_user_profile)
+                    self.account_name = user_profile.get("first_name", "User")
                 self.is_logged_in = True
-                yield rx.toast.success(f"Connected as {self.account_name}")
+                # No toast needed - successful data load is confirmation enough
             else:
                 yield rx.toast.warning("MFA Required or Login Failed.")
         except Exception as e:
@@ -355,15 +359,209 @@ class PortfolioState(BaseState):
         
         self.is_loading = False
     
+    async def _process_single_account(self, name: str, acc_num: str) -> dict:
+        """Process a single account's data. Returns dict with all account data."""
+        # Fetch profile, stocks, and options in parallel
+        profile_task = asyncio.to_thread(rs.profiles.load_account_profile, account_number=acc_num)
+        stocks_task = asyncio.to_thread(rs.account.get_open_stock_positions, account_number=acc_num)
+        options_task = asyncio.to_thread(rs.options.get_open_option_positions, account_number=acc_num)
+        
+        profile, stock_positions, option_positions = await asyncio.gather(
+            profile_task, stocks_task, options_task
+        )
+        
+        c_str = f"${float(profile.get('cash', 0)):,.2f}"
+        b_str = f"${float(profile.get('buying_power', 0)):,.2f}"
+        
+        # Process stocks
+        acc_stocks = await self._process_stock_positions(stock_positions)
+        
+        # Process options
+        acc_options = await self._process_option_positions(option_positions)
+        
+        return {
+            "name": name,
+            "acc_num": acc_num,
+            "stocks": acc_stocks,
+            "options": acc_options,
+            "cash": c_str,
+            "buying_power": b_str,
+        }
+    
+    async def _process_stock_positions(self, stock_positions: list) -> list[dict]:
+        """Process stock positions with parallel symbol lookups."""
+        if not stock_positions:
+            return []
+        
+        # Fetch all symbols in parallel
+        symbol_tasks = [
+            asyncio.to_thread(rs.get_symbol_by_url, p['instrument']) 
+            for p in stock_positions
+        ]
+        stock_symbols = await asyncio.gather(*symbol_tasks)
+        
+        # Fetch all prices in one batch call
+        prices = await asyncio.to_thread(rs.stocks.get_latest_price, stock_symbols)
+        
+        acc_stocks = []
+        for i, p in enumerate(stock_positions):
+            price = float(prices[i]) if prices[i] else 0.0
+            qty = float(p['quantity'])
+            
+            avg_buy_price_raw = p.get('average_buy_price') or p.get('pending_average_buy_price') or 0
+            avg_buy_price = float(avg_buy_price_raw) if avg_buy_price_raw else 0.0
+            
+            cost_basis_reliable = avg_buy_price > 0 and (price == 0 or avg_buy_price > price * 0.01)
+            cost_basis = qty * avg_buy_price
+            market_value = qty * price
+            pl = market_value - cost_basis if cost_basis_reliable else 0
+            
+            acc_stocks.append({
+                "symbol": stock_symbols[i],
+                "shares": qty,
+                "price": price,
+                "raw_equity": market_value,
+                "average_buy_price": avg_buy_price,
+                "cost_basis": cost_basis,
+                "cost_basis_reliable": cost_basis_reliable,
+                "pl": pl,
+                "type": "Stock"
+            })
+        
+        return acc_stocks
+    
+    async def _process_option_positions(self, option_positions: list) -> list[dict]:
+        """Process option positions with parallel data fetches."""
+        if not option_positions:
+            return []
+        
+        option_ids = [p['option_id'] for p in option_positions]
+        
+        # Fetch market data and instrument data in parallel for all options
+        async def fetch_market_data(oid):
+            return await asyncio.to_thread(rs.options.get_option_market_data_by_id, oid)
+        
+        async def fetch_instrument_data(oid):
+            return await asyncio.to_thread(rs.options.get_option_instrument_data_by_id, oid)
+        
+        market_tasks = [fetch_market_data(oid) for oid in option_ids]
+        instrument_tasks = [fetch_instrument_data(oid) for oid in option_ids]
+        
+        # Get unique underlying symbols
+        underlying_symbols = list(set(p["chain_symbol"] for p in option_positions))
+        underlying_task = asyncio.to_thread(rs.stocks.get_latest_price, underlying_symbols)
+        
+        # Run all fetches in parallel
+        results = await asyncio.gather(
+            asyncio.gather(*market_tasks),
+            asyncio.gather(*instrument_tasks),
+            underlying_task
+        )
+        
+        market_data = results[0]
+        instrument_data = results[1]
+        underlying_prices_raw = results[2]
+        
+        underlying_price_map = {
+            sym: float(underlying_prices_raw[i] or 0) 
+            for i, sym in enumerate(underlying_symbols)
+        }
+        
+        acc_options = []
+        for i, p in enumerate(option_positions):
+            m_data = market_data[i] if (market_data and i < len(market_data)) else None
+            i_data = instrument_data[i] if (instrument_data and i < len(instrument_data)) else None
+
+            mark = 0.0
+            delta = 0.0
+            
+            if m_data and isinstance(m_data, list) and len(m_data) > 0:
+                option_data = m_data[0]
+                mark = float(option_data.get('adjusted_mark_price') or option_data.get('mark_price') or 0)
+                delta = float(option_data.get('delta') or 0)
+            elif m_data and isinstance(m_data, dict):
+                mark = float(m_data.get('adjusted_mark_price') or m_data.get('mark_price') or 0)
+                delta = float(m_data.get('delta') or 0)
+            
+            strike_price = float(i_data.get('strike_price', 0)) if i_data else 0
+            expiration_date = i_data.get('expiration_date', '') if i_data else ''
+            option_type = (i_data.get('type', '') if i_data else '').capitalize()
+            
+            dte = 0
+            if expiration_date:
+                try:
+                    exp_dt = datetime.strptime(expiration_date, '%Y-%m-%d')
+                    dte = (exp_dt - datetime.now()).days
+                    if dte < 0:
+                        dte = 0
+                except ValueError:
+                    pass
+        
+            qty = float(p['quantity'])
+            position_type = p.get('type', 'long')
+            is_short = position_type == 'short'
+            
+            avg_price = abs(float(p.get('average_price', 0)))
+            cost_basis = avg_price * qty
+            current_value = qty * mark * SHARES_PER_CONTRACT
+            
+            if is_short:
+                pl = cost_basis - current_value
+            else:
+                pl = current_value - cost_basis
+            
+            signed_value = -current_value if is_short else current_value
+            underlying_price = underlying_price_map.get(p["chain_symbol"], 0)
+            
+            acc_options.append({
+                "symbol": p["chain_symbol"],
+                "shares": qty,
+                "raw_equity": signed_value,
+                "position_type": position_type,
+                "is_short": is_short,
+                "strike_price": strike_price,
+                "option_type": option_type,
+                "expiration_date": expiration_date,
+                "dte": dte,
+                "delta": delta,
+                "underlying_price": underlying_price,
+                "cost_basis": cost_basis,
+                "current_value": current_value,
+                "pl": pl,
+            })
+        
+        return acc_options
+
     @rx.event(background=True)
     async def fetch_all_portfolio_data(self):
         async with self:
             self.is_loading = True
 
         try:
-            # 1. Fetch all accounts
+            # Check cache first
+            cached_data = get_cached("portfolio_data")
+            if cached_data:
+                async with self:
+                    self.account_map = cached_data["account_map"]
+                    self.all_stock_holdings = cached_data["all_stock_holdings"]
+                    self.all_options_holdings = cached_data["all_options_holdings"]
+                    self.metric_data = cached_data["metric_data"]
+                    if not self.selected_account and self.account_names:
+                        self.selected_account = self.account_names[0]
+                    if self.selected_account:
+                        acc_num = self.account_map.get(self.selected_account)
+                        if acc_num and acc_num in self.metric_data:
+                            self.cash_balance = self.metric_data[acc_num]["cash"]
+                            self.buying_power = self.metric_data[acc_num]["bp"]
+                    self.is_loading = False
+                return rx.toast.success("Portfolio loaded from cache")
+
+            # Fetch all accounts
             url = "https://api.robinhood.com/accounts/?default_to_all_accounts=true&include_managed=true&include_multiple_individual=true"
             res = await asyncio.to_thread(rs.request_get, url, "regular")
+            
+            if res is None:
+                return rx.toast.error("Session expired. Please refresh the page.")
             
             temp_map = {}
             for acc in res.get('results', []):
@@ -377,160 +575,52 @@ class PortfolioState(BaseState):
                 if not self.selected_account and self.account_names:
                     self.selected_account = self.account_names[0]
                 current_accounts = list(self.account_map.items())
-
-            # 2. Process each account
-            for name, acc_num in current_accounts:
-                async with self:
+                for name, _ in current_accounts:
                     self.loading_accounts.add(name)
 
-                # Fetch Metrics
-                profile = await asyncio.to_thread(rs.profiles.load_account_profile, account_number=acc_num)
-                c_str = f"${float(profile.get('cash', 0)):,.2f}"
-                b_str = f"${float(profile.get('buying_power', 0)):,.2f}"
+            # Process ALL accounts in parallel
+            account_tasks = [
+                self._process_single_account(name, acc_num) 
+                for name, acc_num in current_accounts
+            ]
+            account_results = await asyncio.gather(*account_tasks, return_exceptions=True)
 
-                # Fetch Raw Positions
-                stock_positions = await asyncio.to_thread(rs.account.get_open_stock_positions, account_number=acc_num)
-                option_positions = await asyncio.to_thread(rs.options.get_open_option_positions, account_number=acc_num)
+            # Aggregate results
+            all_stocks = {}
+            all_options = {}
+            all_metrics = {}
+            
+            for result in account_results:
+                if isinstance(result, Exception):
+                    print(f"Error processing account: {result}")
+                    continue
+                    
+                acc_num = result["acc_num"]
+                all_stocks[acc_num] = result["stocks"]
+                all_options[acc_num] = result["options"]
+                all_metrics[acc_num] = {"cash": result["cash"], "bp": result["buying_power"]}
+
+            # Update state once with all data
+            async with self:
+                self.all_stock_holdings = all_stocks
+                self.all_options_holdings = all_options
+                self.metric_data = all_metrics
                 
-                # --- STOCKS PROCESSING ---
-                acc_stocks = []
-                if stock_positions:
-                    stock_symbols = [await asyncio.to_thread(rs.get_symbol_by_url, p['instrument']) for p in stock_positions]
-                    prices = await asyncio.to_thread(rs.stocks.get_latest_price, stock_symbols)
-                    
-                    for i, p in enumerate(stock_positions):
-                        price = float(prices[i]) if prices[i] else 0.0
-                        qty = float(p['quantity'])
-                        
-                        # Get average buy price from position data
-                        # Note: This may be inaccurate for transferred positions (ACATS)
-                        # as Robinhood's API doesn't expose tax lot cost basis
-                        avg_buy_price_raw = p.get('average_buy_price') or p.get('pending_average_buy_price') or 0
-                        avg_buy_price = float(avg_buy_price_raw) if avg_buy_price_raw else 0.0
-                        
-                        # Flag unreliable cost basis (likely transferred positions)
-                        # If avg cost is 0 or less than 1% of current price, it's suspect
-                        cost_basis_reliable = avg_buy_price > 0 and (price == 0 or avg_buy_price > price * 0.01)
-                        
-                        cost_basis = qty * avg_buy_price
-                        market_value = qty * price
-                        pl = market_value - cost_basis if cost_basis_reliable else 0
-                        
-                        acc_stocks.append({
-                            "symbol": stock_symbols[i],
-                            "shares": qty,
-                            "price": price,
-                            "raw_equity": market_value,
-                            "average_buy_price": avg_buy_price,
-                            "cost_basis": cost_basis,
-                            "cost_basis_reliable": cost_basis_reliable,
-                            "pl": pl,
-                            "type": "Stock"
-                        })
+                if self.selected_account:
+                    acc_num = self.account_map.get(self.selected_account)
+                    if acc_num and acc_num in self.metric_data:
+                        self.cash_balance = self.metric_data[acc_num]["cash"]
+                        self.buying_power = self.metric_data[acc_num]["bp"]
+                
+                self.loading_accounts = set()
 
-                # --- OPTIONS PROCESSING ---
-                acc_options = []
-                if option_positions:
-                    option_ids = [p['option_id'] for p in option_positions]
-                    
-                    # Fetch market data and instrument data for each option
-                    market_data = await asyncio.to_thread(
-                        lambda ids: [rs.options.get_option_market_data_by_id(oid) for oid in ids],
-                        option_ids
-                    )
-                    instrument_data = await asyncio.to_thread(
-                        lambda ids: [rs.options.get_option_instrument_data_by_id(oid) for oid in ids],
-                        option_ids
-                    )
-                    
-                    # Get unique underlying symbols and fetch their prices
-                    underlying_symbols = list(set(p["chain_symbol"] for p in option_positions))
-                    underlying_prices_raw = await asyncio.to_thread(rs.stocks.get_latest_price, underlying_symbols)
-                    underlying_price_map = {sym: float(underlying_prices_raw[i] or 0) for i, sym in enumerate(underlying_symbols)}
-                    
-                    for i, p in enumerate(option_positions):
-                        m_data = market_data[i] if (market_data and i < len(market_data)) else None
-                        i_data = instrument_data[i] if (instrument_data and i < len(instrument_data)) else None
-
-                        mark = 0.0
-                        delta = 0.0
-                        
-                        # API returns a list; extract first element to get the dict
-                        if m_data and isinstance(m_data, list) and len(m_data) > 0:
-                            option_data = m_data[0]
-                            mark = float(option_data.get('adjusted_mark_price') or option_data.get('mark_price') or 0)
-                            delta = float(option_data.get('delta') or 0)
-                        elif m_data and isinstance(m_data, dict):
-                            mark = float(m_data.get('adjusted_mark_price') or m_data.get('mark_price') or 0)
-                            delta = float(m_data.get('delta') or 0)
-                        
-                        # Extract instrument details
-                        strike_price = float(i_data.get('strike_price', 0)) if i_data else 0
-                        expiration_date = i_data.get('expiration_date', '') if i_data else ''
-                        option_type = (i_data.get('type', '') if i_data else '').capitalize()  # "call" or "put"
-                        
-                        # Calculate DTE
-                        dte = 0
-                        if expiration_date:
-                            try:
-                                exp_dt = datetime.strptime(expiration_date, '%Y-%m-%d')
-                                dte = (exp_dt - datetime.now()).days
-                                if dte < 0:
-                                    dte = 0
-                            except ValueError:
-                                pass
-                    
-                        qty = float(p['quantity'])
-                        position_type = p.get('type', 'long')  # "long" or "short"
-                        is_short = position_type == 'short'
-                        
-                        # Cost basis: average_price is already the per-contract price
-                        # Use abs() since API may return negative for short positions
-                        avg_price = abs(float(p.get('average_price', 0)))
-                        cost_basis = avg_price * qty
-                        
-                        # Current value
-                        current_value = qty * mark * SHARES_PER_CONTRACT
-                        
-                        # P/L calculation: Long = current - cost, Short = cost - current
-                        if is_short:
-                            pl = cost_basis - current_value  # Profit when value decreases
-                        else:
-                            pl = current_value - cost_basis  # Profit when value increases
-                        
-                        # For short positions, value represents liability (negative contribution)
-                        signed_value = -current_value if is_short else current_value
-                        
-                        # Get underlying price
-                        underlying_price = underlying_price_map.get(p["chain_symbol"], 0)
-                        
-                        acc_options.append({
-                            "symbol": p["chain_symbol"],
-                            "shares": qty,
-                            "raw_equity": signed_value,
-                            "position_type": position_type,
-                            "is_short": is_short,
-                            "strike_price": strike_price,
-                            "option_type": option_type,
-                            "expiration_date": expiration_date,
-                            "dte": dte,
-                            "delta": delta,
-                            "underlying_price": underlying_price,
-                            "cost_basis": cost_basis,
-                            "current_value": current_value,
-                            "pl": pl,
-                        })
-
-                # 3. Update State Dictionaries
-                async with self:
-                    self.all_stock_holdings[acc_num] = acc_stocks
-                    self.all_options_holdings[acc_num] = acc_options
-                    self.metric_data[acc_num] = {"cash": c_str, "bp": b_str}
-                    
-                    if self.selected_account == name:
-                        self.cash_balance = c_str
-                        self.buying_power = b_str
-                    self.loading_accounts.remove(name)
+            # Cache the results
+            set_cached("portfolio_data", {
+                "account_map": temp_map,
+                "all_stock_holdings": all_stocks,
+                "all_options_holdings": all_options,
+                "metric_data": all_metrics,
+            }, PORTFOLIO_TTL)
 
             return rx.toast.success("Portfolio Updated")
         except Exception as e:

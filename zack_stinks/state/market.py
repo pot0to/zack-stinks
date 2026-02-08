@@ -1,8 +1,10 @@
 from .base import BaseState
 import reflex as rx
+import asyncio
 import plotly.graph_objects as go
 import yfinance as yf
 from ..analyzer import StockAnalyzer
+from ..utils.cache import get_cached, set_cached, MARKET_DATA_TTL, DEFAULT_TTL
 
 class MarketState(BaseState):
     market_data: dict[str, dict[str, str]] = {}
@@ -13,36 +15,43 @@ class MarketState(BaseState):
     _portfolio_symbols: list[str] = []
 
     async def setup_market_page(self):
+        # Fetch market data and trend chart in parallel (don't wait for portfolio)
         yield MarketState.fetch_market_data
         yield MarketState.fetch_trend_data
-        yield MarketState.fetch_portfolio_signals
+        # Portfolio signals are fetched separately, non-blocking
+        yield MarketState.fetch_portfolio_signals_async
 
     async def fetch_market_data(self):
         self.is_loading = True
         yield
-        self.market_data = StockAnalyzer().get_market_indices()
+        
+        # Check cache first
+        cached = get_cached("market_indices")
+        if cached:
+            self.market_data = cached
+            self.is_loading = False
+            return
+        
+        # Fetch fresh data
+        self.market_data = await asyncio.to_thread(StockAnalyzer().get_market_indices)
+        set_cached("market_indices", self.market_data, MARKET_DATA_TTL)
         self.is_loading = False
 
-    async def fetch_portfolio_signals(self):
-        """Fetch gap events and MA proximity for portfolio holdings."""
+    async def fetch_portfolio_signals_async(self):
+        """Fetch gap events and MA proximity for portfolio holdings.
+        
+        This is now non-blocking: if portfolio isn't loaded, we skip rather than
+        triggering a full portfolio sync. The user can refresh after visiting portfolio.
+        """
         from .portfolio import PortfolioState
         
         portfolio_state = await self.get_state(PortfolioState)
         
-        print(f"DEBUG: is_logged_in = {portfolio_state.is_logged_in}")
-        print(f"DEBUG: all_stock_holdings keys = {list(portfolio_state.all_stock_holdings.keys())}")
-        
-        # Ensure portfolio data is loaded (login and fetch if needed)
-        if not portfolio_state.all_stock_holdings and not portfolio_state.is_logged_in:
-            print("DEBUG: Triggering portfolio login and fetch...")
-            # Trigger portfolio login and data fetch
-            async for _ in portfolio_state.login_to_robinhood():
-                pass
-            async for _ in portfolio_state.fetch_all_portfolio_data():
-                pass
-            # Re-fetch state after loading
-            portfolio_state = await self.get_state(PortfolioState)
-            print(f"DEBUG: After fetch - all_stock_holdings keys = {list(portfolio_state.all_stock_holdings.keys())}")
+        # If portfolio not loaded, skip signals (don't block market page)
+        if not portfolio_state.all_stock_holdings:
+            self.gap_events = []
+            self.ma_proximity_events = []
+            return
         
         # Collect unique symbols from portfolio
         symbols = set()
@@ -58,84 +67,108 @@ class MarketState(BaseState):
                     symbols.add(symbol)
         
         symbol_list = list(symbols)
-        print(f"DEBUG: Collected symbols = {symbol_list}")
         
         if symbol_list:
+            # Check cache
+            cache_key = f"portfolio_signals:{','.join(sorted(symbol_list))}"
+            cached = get_cached(cache_key)
+            if cached:
+                self.gap_events = cached["gap_events"]
+                self.ma_proximity_events = cached["ma_proximity_events"]
+                return
+            
+            # Fetch signals in parallel
             analyzer = StockAnalyzer()
-            self.gap_events = analyzer.detect_gap_events(symbol_list)
-            print(f"DEBUG: gap_events count = {len(self.gap_events)}")
-            self.ma_proximity_events = analyzer.detect_ma_proximity(symbol_list)
-            print(f"DEBUG: ma_proximity_events count = {len(self.ma_proximity_events)}")
-            print(f"DEBUG: ma_proximity_events = {self.ma_proximity_events}")
+            gap_task = asyncio.to_thread(analyzer.detect_gap_events, symbol_list)
+            ma_task = asyncio.to_thread(analyzer.detect_ma_proximity, symbol_list)
+            
+            self.gap_events, self.ma_proximity_events = await asyncio.gather(gap_task, ma_task)
+            
+            # Cache results
+            set_cached(cache_key, {
+                "gap_events": self.gap_events,
+                "ma_proximity_events": self.ma_proximity_events,
+            }, DEFAULT_TTL)
         else:
-            print("DEBUG: No symbols found, setting empty lists")
             self.gap_events = []
             self.ma_proximity_events = []
 
-    def fetch_trend_data(self):
-        """Fetches historical data and builds the normalized comparison chart."""
+    async def fetch_trend_data(self):
+        """Fetches historical data and builds the normalized comparison chart.
+        Now async with parallel ticker fetches."""
+        
+        # Check cache first
+        cached = get_cached("trend_chart")
+        if cached:
+            self.trend_fig = cached
+            return
+        
         analyzer = StockAnalyzer()
-        # Use the raw symbols defined in your analyzer's ticker_map
         tickers = analyzer.ticker_map 
         
-        fig = go.Figure()
-
-        for name, symbol in tickers.items():
-            # Skip VIX for the momentum chart (it remains in header cards)
+        # Fetch all tickers in parallel
+        async def fetch_ticker_data(name: str, symbol: str):
             if name == "VIX":
-                continue
+                return None
             try:
-                # Get 1 month of price history
-                df = yf.Ticker(symbol).history(period="1mo").reset_index()
+                df = await asyncio.to_thread(
+                    lambda: yf.Ticker(symbol).history(period="1mo").reset_index()
+                )
                 if df.empty:
-                    continue
-
-                # Percent change from start: ((Current / Start) - 1) * 100, centered at 0%
+                    return None
+                
                 start_price = df["Close"].iloc[0]
                 relative_growth = (((df["Close"] / start_price) - 1) * 100).round(2).tolist()
                 dates = df["Date"].dt.strftime("%b %d").tolist()
-
-                fig.add_trace(
-                    go.Scatter(
-                        x=dates,
-                        y=relative_growth,
-                        name=name,
-                        mode="lines",
-                        hovertemplate=f"<b>{name}</b>: %{{y}}%<extra></extra>"
-                    )
-                )
+                
+                return {
+                    "name": name,
+                    "dates": dates,
+                    "growth": relative_growth,
+                }
             except Exception as e:
                 print(f"Error loading trend for {name} ({symbol}): {e}")
+                return None
+        
+        # Parallel fetch all tickers
+        tasks = [fetch_ticker_data(name, symbol) for name, symbol in tickers.items()]
+        results = await asyncio.gather(*tasks)
+        
+        fig = go.Figure()
+        
+        for result in results:
+            if result is None:
+                continue
+            fig.add_trace(
+                go.Scatter(
+                    x=result["dates"],
+                    y=result["growth"],
+                    name=result["name"],
+                    mode="lines",
+                    hovertemplate=f"<b>{result['name']}</b>: %{{y}}%<extra></extra>"
+                )
+            )
 
         # Modern Financial Dashboard Styling
         fig.update_layout(
             template="plotly_dark",
-            # title=dict(text="Market Momentum", font=dict(size=16)),
             hovermode="x unified",
             paper_bgcolor="rgba(0,0,0,0)",
             plot_bgcolor="rgba(0,0,0,0)",
             height=400,
             margin=dict(l=10, r=10, t=60, b=20),
-            
-            # X-AXIS: Month and Year only
             xaxis=dict(
                 showgrid=False,
-                # 'dtick' controls the frequency (M1 = every 1 month)
                 dtick="M1",
-                # 'tickformat' defines the display ( %b = Short Month, %Y = 4-digit Year)
                 tickformat="%b %Y",
-                # Ensures labels don't overlap if you have many months
                 tickangle=-45, 
             ),
-            
-            # Y-AXIS: Named "% Change"
             yaxis=dict(
                 title="30-Day % Change",
                 ticksuffix="%", 
                 gridcolor="rgba(255,255,255,0.05)",
                 side="right"
             ),
-            
             legend=dict(
                 orientation="h", 
                 yanchor="bottom", y=1.02, 
@@ -144,3 +177,4 @@ class MarketState(BaseState):
         )
 
         self.trend_fig = fig
+        set_cached("trend_chart", fig, MARKET_DATA_TTL)

@@ -7,6 +7,7 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from .base import BaseState
 from ..utils.technical import calculate_ma_proximity, calculate_ma_series
+from ..utils.cache import get_cached, set_cached, DEFAULT_TTL
 
 
 class ResearchState(BaseState):
@@ -34,7 +35,10 @@ class ResearchState(BaseState):
         self.period = value
 
     async def fetch_stock_data(self):
-        """Fetch stock data and calculate all statistics."""
+        """Fetch stock data and calculate all statistics.
+        
+        Optimized: fetches extended history once and slices for display period.
+        """
         if not self.ticker.strip():
             yield rx.toast.error("Please enter a ticker symbol")
             return
@@ -45,23 +49,29 @@ class ResearchState(BaseState):
         try:
             ticker_obj = yf.Ticker(self.ticker)
             
-            # Determine how much history we need: display period + 200 days for MA calculation
-            # Map periods to approximate fetch periods that ensure full MA coverage
-            extended_periods = {
-                "1mo": "1y",
-                "3mo": "1y", 
-                "6mo": "2y",
-                "1y": "3y",
-                "2y": "5y",
+            # Map display periods to days for slicing
+            period_days = {
+                "1mo": 22,
+                "3mo": 66, 
+                "6mo": 126,
+                "1y": 252,
+                "2y": 504,
             }
-            fetch_period = extended_periods.get(self.period, "5y")
+            display_days = period_days.get(self.period, 252)
             
-            # Fetch extended historical data for MA calculations
-            full_hist = await asyncio.to_thread(
-                ticker_obj.history, period=fetch_period
-            )
+            # Check cache for extended history
+            cache_key = f"stock_history:{self.ticker}"
+            full_hist = get_cached(cache_key)
             
-            if full_hist.empty:
+            if full_hist is None:
+                # Fetch 5 years of data once (covers all display periods + MA calculations)
+                full_hist = await asyncio.to_thread(
+                    ticker_obj.history, period="5y"
+                )
+                if not full_hist.empty:
+                    set_cached(cache_key, full_hist, DEFAULT_TTL)
+            
+            if full_hist is None or full_hist.empty:
                 yield rx.toast.error(f"No data found for {self.ticker}")
                 self.is_loading = False
                 return
@@ -104,10 +114,8 @@ class ResearchState(BaseState):
             ma_50_series = calculate_ma_series(full_hist['Close'], 50)
             ma_200_series = calculate_ma_series(full_hist['Close'], 200)
 
-            # Get chart data for the selected display period
-            chart_hist = await asyncio.to_thread(
-                ticker_obj.history, period=self.period
-            )
+            # Slice chart data from full history (no second fetch!)
+            chart_hist = full_hist.tail(display_days)
             
             # Filter MA series to match chart date range
             chart_start = chart_hist.index.min()
