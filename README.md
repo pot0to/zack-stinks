@@ -86,6 +86,8 @@ python -m venv .venv
 pip install -r requirements.txt
 ```
 
+If you forgot to check "Add Python to PATH" during installation, you can either reinstall Python with that option checked, or manually add it by going to Settings > System > About > Advanced system settings > Environment Variables, then adding `C:\Users\<YourUsername>\AppData\Local\Programs\Python\Python311\` and its `Scripts` subfolder to your PATH.
+
 ### Configuration
 
 Create a `credentials.json` file in the project root:
