@@ -12,6 +12,7 @@ class BaseState(rx.State):
     is_logged_in: bool = False
     account_name: str = "User"
     sidebar_open: bool = False
+    hide_portfolio_values: bool = False
     
     # Login form state
     login_username: str = ""
@@ -22,6 +23,9 @@ class BaseState(rx.State):
 
     def toggle_sidebar(self):
         self.sidebar_open = not self.sidebar_open
+    
+    def toggle_hide_values(self):
+        self.hide_portfolio_values = not self.hide_portfolio_values
     
     def set_login_username(self, value: str):
         self.login_username = value

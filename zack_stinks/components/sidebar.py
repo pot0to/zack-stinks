@@ -26,6 +26,42 @@ def _nav_link(icon: str, label: str, href: str) -> rx.Component:
     )
 
 
+def _privacy_toggle() -> rx.Component:
+    """Toggle to hide portfolio values for screen sharing."""
+    expanded_toggle = rx.hstack(
+        rx.icon(
+            rx.cond(State.hide_portfolio_values, "eye-off", "eye"),
+            size=16,
+        ),
+        rx.text(
+            rx.cond(State.hide_portfolio_values, "Values Hidden", "Hide Values"),
+            size="1",
+        ),
+        align="center",
+        spacing="2",
+        padding="0.5em 1em",
+        margin_x="0.5em",
+        border_radius="8px",
+        cursor="pointer",
+        background=rx.cond(State.hide_portfolio_values, "rgba(168, 85, 247, 0.2)", "transparent"),
+        _hover={"background": BG_HOVER},
+        on_click=State.toggle_hide_values,
+    )
+    
+    collapsed_toggle = rx.center(
+        rx.icon(
+            rx.cond(State.hide_portfolio_values, "eye-off", "eye"),
+            size=18,
+            cursor="pointer",
+            on_click=State.toggle_hide_values,
+        ),
+        width="100%",
+        padding="0.5em",
+    )
+    
+    return rx.cond(State.sidebar_open, expanded_toggle, collapsed_toggle)
+
+
 def _status_indicator() -> rx.Component:
     """Connection status indicator at bottom of sidebar."""
     connected_card = rx.hstack(
@@ -141,6 +177,7 @@ def sidebar() -> rx.Component:
                 ),
             ),
             rx.spacer(),
+            _privacy_toggle(),
             _status_indicator(),
             height="100%",
             align_items="start",

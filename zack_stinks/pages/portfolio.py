@@ -5,6 +5,20 @@ from ..components.cards import metric_card
 from ..state import PortfolioState, State
 
 
+def _masked_value(value: rx.Var, mask_digits: bool = True) -> rx.Component:
+    """Display value with optional masking when hide_portfolio_values is enabled.
+    
+    When masked, replaces digits with asterisks for privacy during screen sharing.
+    """
+    if mask_digits:
+        return rx.cond(
+            State.hide_portfolio_values,
+            rx.text(value.to(str).replace("0", "*").replace("1", "*").replace("2", "*").replace("3", "*").replace("4", "*").replace("5", "*").replace("6", "*").replace("7", "*").replace("8", "*").replace("9", "*")),
+            rx.text(value),
+        )
+    return rx.text(value)
+
+
 def portfolio_page() -> rx.Component:
     """Portfolio page with shared layout."""
     return page_layout(_portfolio_content(), use_container=False)
@@ -68,22 +82,50 @@ def _portfolio_content() -> rx.Component:
 
 
 def _stats_header() -> rx.Component:
-    """Portfolio stats header with key metrics."""
+    """Portfolio stats header with key metrics and privacy masking."""
+    def masked(val):
+        """Mask digits when privacy mode is enabled."""
+        return rx.cond(
+            State.hide_portfolio_values,
+            val.to(str).replace("0", "*").replace("1", "*").replace("2", "*").replace("3", "*").replace("4", "*").replace("5", "*").replace("6", "*").replace("7", "*").replace("8", "*").replace("9", "*"),
+            val,
+        )
+    
     return rx.grid(
-        metric_card(
-            "Total Portfolio Value",
-            PortfolioState.selected_account_balance,
-            badge=rx.badge(
-                PortfolioState.selected_account_change,
-                color_scheme=rx.cond(
-                    PortfolioState.selected_account_change.contains("-"), "red", "green"
+        rx.card(
+            rx.vstack(
+                rx.text("Total Portfolio Value", size="2", color="gray", weight="medium"),
+                rx.heading(masked(PortfolioState.selected_account_balance), size="7"),
+                rx.badge(
+                    masked(PortfolioState.selected_account_change),
+                    color_scheme=rx.cond(
+                        PortfolioState.selected_account_change.contains("-"), "red", "green"
+                    ),
+                    variant="soft",
+                    size="2",
                 ),
-                variant="soft",
-                size="2",
-            ),
+                align_items="start",
+                spacing="1",
+            )
         ),
-        metric_card("Cash Balance", PortfolioState.cash_balance, subtext="Available to withdraw"),
-        metric_card("Buying Power", PortfolioState.buying_power, subtext="Total margin & cash"),
+        rx.card(
+            rx.vstack(
+                rx.text("Cash Balance", size="2", color="gray", weight="medium"),
+                rx.heading(masked(PortfolioState.cash_balance), size="7"),
+                rx.text("Available to withdraw", size="1", color="slate"),
+                align_items="start",
+                spacing="1",
+            )
+        ),
+        rx.card(
+            rx.vstack(
+                rx.text("Buying Power", size="2", color="gray", weight="medium"),
+                rx.heading(masked(PortfolioState.buying_power), size="7"),
+                rx.text("Total margin & cash", size="1", color="slate"),
+                align_items="start",
+                spacing="1",
+            )
+        ),
         columns="3",
         spacing="4",
         width="100%",
@@ -159,28 +201,37 @@ def _stock_holdings_table() -> rx.Component:
 
 
 def _stock_row(h: dict) -> rx.Component:
-    """Individual stock holding row."""
+    """Individual stock holding row with privacy masking support."""
+    def masked(val):
+        """Mask digits when privacy mode is enabled."""
+        str_val = val.to(str)
+        return rx.cond(
+            State.hide_portfolio_values,
+            str_val.replace("0", "*").replace("1", "*").replace("2", "*").replace("3", "*").replace("4", "*").replace("5", "*").replace("6", "*").replace("7", "*").replace("8", "*").replace("9", "*"),
+            str_val,
+        )
+    
     return rx.table.row(
         rx.table.cell(rx.text(h["symbol"], weight="bold")),
-        rx.table.cell(h["price"]),
-        rx.table.cell(h["shares"]),
-        rx.table.cell(h["value"]),
-        rx.table.cell(rx.text(h["avg_cost"], color=rx.cond(h["cost_basis_reliable"], "inherit", "gray"))),
+        rx.table.cell(masked(h["price"])),
+        rx.table.cell(masked(h["shares"])),
+        rx.table.cell(masked(h["value"])),
+        rx.table.cell(rx.text(masked(h["avg_cost"]), color=rx.cond(h["cost_basis_reliable"], "inherit", "gray"))),
         rx.table.cell(
             rx.text(
-                h["pl_formatted"],
+                masked(h["pl_formatted"]),
                 color=rx.cond(h["cost_basis_reliable"], rx.cond(h["pl_positive"], "green", "red"), "gray"),
                 weight="medium",
             )
         ),
         rx.table.cell(
             rx.text(
-                h["pl_pct_formatted"],
+                masked(h["pl_pct_formatted"]),
                 color=rx.cond(h["cost_basis_reliable"], rx.cond(h["pl_positive"], "green", "red"), "gray"),
                 weight="medium",
             )
         ),
-        rx.table.cell(h["allocation"]),
+        rx.table.cell(masked(h["allocation"])),
     )
 
 
@@ -238,7 +289,16 @@ def _options_holdings_table() -> rx.Component:
 
 
 def _options_row(h: dict) -> rx.Component:
-    """Individual options holding row."""
+    """Individual options holding row with privacy masking support."""
+    def masked(val):
+        """Mask digits when privacy mode is enabled."""
+        str_val = val.to(str)
+        return rx.cond(
+            State.hide_portfolio_values,
+            str_val.replace("0", "*").replace("1", "*").replace("2", "*").replace("3", "*").replace("4", "*").replace("5", "*").replace("6", "*").replace("7", "*").replace("8", "*").replace("9", "*"),
+            str_val,
+        )
+    
     return rx.table.row(
         rx.table.cell(
             rx.hstack(
@@ -251,7 +311,7 @@ def _options_row(h: dict) -> rx.Component:
                 spacing="2",
             )
         ),
-        rx.table.cell(h["strike"]),
+        rx.table.cell(masked(h["strike"])),
         rx.table.cell(
             rx.badge(h["option_type"], color_scheme=rx.cond(h["option_type"] == "Call", "blue", "purple"), variant="soft")
         ),
@@ -259,17 +319,17 @@ def _options_row(h: dict) -> rx.Component:
             rx.badge(h["side"], color_scheme=rx.cond(h["is_short"], "orange", "green"), variant="soft")
         ),
         rx.table.cell(h["dte"]),
-        rx.table.cell(h["underlying"]),
-        rx.table.cell(h["delta"]),
-        rx.table.cell(h["cost_basis"]),
-        rx.table.cell(h["current_value"]),
+        rx.table.cell(masked(h["underlying"])),
+        rx.table.cell(masked(h["delta"])),
+        rx.table.cell(masked(h["cost_basis"])),
+        rx.table.cell(masked(h["current_value"])),
         rx.table.cell(
-            rx.text(h["pl_formatted"], color=rx.cond(h["pl_positive"], "green", "red"), weight="medium")
+            rx.text(masked(h["pl_formatted"]), color=rx.cond(h["pl_positive"], "green", "red"), weight="medium")
         ),
         rx.table.cell(
-            rx.text(h["pl_pct_formatted"], color=rx.cond(h["pl_positive"], "green", "red"), weight="medium")
+            rx.text(masked(h["pl_pct_formatted"]), color=rx.cond(h["pl_positive"], "green", "red"), weight="medium")
         ),
-        rx.table.cell(h["weight"]),
+        rx.table.cell(masked(h["weight"])),
     )
 
 

@@ -220,14 +220,22 @@ def _below_ma_content() -> rx.Component:
 
 
 def _below_ma_row(event: dict) -> rx.Component:
-    """Table row for below 200-day MA event."""
+    """Table row for below 200-day MA event with privacy masking."""
+    def masked(val):
+        str_val = val.to(str)
+        return rx.cond(
+            State.hide_portfolio_values,
+            str_val.replace("0", "*").replace("1", "*").replace("2", "*").replace("3", "*").replace("4", "*").replace("5", "*").replace("6", "*").replace("7", "*").replace("8", "*").replace("9", "*"),
+            str_val,
+        )
+    
     return rx.table.row(
         rx.table.cell(rx.text(event["symbol"], weight="bold")),
-        rx.table.cell(event["price"]),
-        rx.table.cell(event["ma_200_value"]),
+        rx.table.cell(masked(event["price"])),
+        rx.table.cell(masked(event["ma_200_value"])),
         rx.table.cell(
             rx.text(
-                event["pct_below"], "%",
+                masked(event["pct_below"]), "%",
                 color="red",
                 weight="medium",
             )
@@ -239,7 +247,15 @@ def _below_ma_row(event: dict) -> rx.Component:
 
 
 def _gap_event_row(event: dict) -> rx.Component:
-    """Table row for gap event."""
+    """Table row for gap event with privacy masking."""
+    def masked(val):
+        str_val = val.to(str)
+        return rx.cond(
+            State.hide_portfolio_values,
+            str_val.replace("0", "*").replace("1", "*").replace("2", "*").replace("3", "*").replace("4", "*").replace("5", "*").replace("6", "*").replace("7", "*").replace("8", "*").replace("9", "*"),
+            str_val,
+        )
+    
     return rx.table.row(
         rx.table.cell(
             rx.hstack(
@@ -255,17 +271,25 @@ def _gap_event_row(event: dict) -> rx.Component:
         rx.table.cell(event["gap_type"]),
         rx.table.cell(
             rx.text(
-                event["pct_change"], "%",
+                masked(event["pct_change"]), "%",
                 color=rx.cond(event["pct_change_val"].to(float) >= 0, "green", "red"),
                 weight="medium",
             )
         ),
-        rx.table.cell(rx.text(event["volume_ratio"], "x avg")),
+        rx.table.cell(rx.text(masked(event["volume_ratio"]), "x avg")),
     )
 
 
 def _ma_proximity_row(event: dict) -> rx.Component:
-    """Table row for MA proximity event."""
+    """Table row for MA proximity event with privacy masking."""
+    def masked(val):
+        str_val = val.to(str)
+        return rx.cond(
+            State.hide_portfolio_values,
+            str_val.replace("0", "*").replace("1", "*").replace("2", "*").replace("3", "*").replace("4", "*").replace("5", "*").replace("6", "*").replace("7", "*").replace("8", "*").replace("9", "*"),
+            str_val,
+        )
+    
     return rx.table.row(
         rx.table.cell(
             rx.hstack(
@@ -278,11 +302,11 @@ def _ma_proximity_row(event: dict) -> rx.Component:
                 spacing="2",
             )
         ),
-        rx.table.cell(event["price"]),
-        rx.table.cell(event["ma_value"]),
+        rx.table.cell(masked(event["price"])),
+        rx.table.cell(masked(event["ma_value"])),
         rx.table.cell(
             rx.text(
-                event["pct_offset"], "%",
+                masked(event["pct_offset"]), "%",
                 color=rx.cond(event["pct_offset_val"].to(float) >= 0, "green", "red"),
                 weight="medium",
             )

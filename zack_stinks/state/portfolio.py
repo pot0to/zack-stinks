@@ -1,6 +1,6 @@
 import reflex as rx
 import asyncio
-import json
+import re
 from datetime import datetime
 import robin_stocks.robinhood as rs
 import plotly.graph_objects as go
@@ -9,6 +9,12 @@ from .base import BaseState
 from ..utils.cache import get_cached, set_cached, PORTFOLIO_TTL
 
 SHARES_PER_CONTRACT = 100
+
+
+def _mask_value(value: str) -> str:
+    """Replace digits with asterisks for privacy mode."""
+    return re.sub(r'\d', '*', value)
+
 
 class PortfolioState(BaseState):
     # Map account names to their internal Robinhood account numbers
