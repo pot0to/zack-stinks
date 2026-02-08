@@ -63,9 +63,6 @@ class StockAnalyzer:
                 
         return market_results
 
-    def find_buy_opportunities(self, threshold=-3.0):
-        return []
-
     def detect_gap_events(self, symbols: list[str], volume_threshold: float = 1.5) -> list[dict]:
         """
         Detect gap up/down events for a list of ticker symbols.

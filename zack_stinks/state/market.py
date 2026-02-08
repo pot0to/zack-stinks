@@ -73,35 +73,7 @@ class MarketState(BaseState):
         self.portfolio_data_available = True
         
         # Collect unique symbols from portfolio with account ownership
-        symbols = set()
-        symbol_accounts: dict[str, list[str]] = {}
-        
-        # Build reverse map: account_number -> display_name
-        acc_num_to_name = {v: k for k, v in portfolio_state.account_map.items()}
-        
-        for acc_num, acc_holdings in portfolio_state.all_stock_holdings.items():
-            acc_name = acc_num_to_name.get(acc_num, acc_num)
-            for holding in acc_holdings:
-                symbol = holding.get("symbol", "")
-                if symbol:
-                    symbols.add(symbol)
-                    if symbol not in symbol_accounts:
-                        symbol_accounts[symbol] = []
-                    if acc_name not in symbol_accounts[symbol]:
-                        symbol_accounts[symbol].append(acc_name)
-        
-        for acc_num, acc_holdings in portfolio_state.all_options_holdings.items():
-            acc_name = acc_num_to_name.get(acc_num, acc_num)
-            for holding in acc_holdings:
-                symbol = holding.get("symbol", "")
-                if symbol:
-                    symbols.add(symbol)
-                    if symbol not in symbol_accounts:
-                        symbol_accounts[symbol] = []
-                    if acc_name not in symbol_accounts[symbol]:
-                        symbol_accounts[symbol].append(acc_name)
-        
-        symbol_list = list(symbols)
+        symbol_list, symbol_accounts = self._collect_portfolio_symbols(portfolio_state)
         
         if symbol_list:
             # Check cache
@@ -136,6 +108,33 @@ class MarketState(BaseState):
             self.below_ma_200_events = []
         
         self.portfolio_signals_loading = False
+    
+    def _collect_portfolio_symbols(self, portfolio_state) -> tuple[list[str], dict[str, list[str]]]:
+        """Extract unique symbols and their account ownership from portfolio holdings.
+        
+        Returns (symbol_list, symbol_accounts) where symbol_accounts maps each symbol
+        to the list of account display names that hold it.
+        """
+        symbols = set()
+        symbol_accounts: dict[str, list[str]] = {}
+        
+        # Build reverse map: account_number -> display_name
+        acc_num_to_name = {v: k for k, v in portfolio_state.account_map.items()}
+        
+        # Process both stock and option holdings
+        for holdings_dict in [portfolio_state.all_stock_holdings, portfolio_state.all_options_holdings]:
+            for acc_num, acc_holdings in holdings_dict.items():
+                acc_name = acc_num_to_name.get(acc_num, acc_num)
+                for holding in acc_holdings:
+                    symbol = holding.get("symbol", "")
+                    if symbol:
+                        symbols.add(symbol)
+                        if symbol not in symbol_accounts:
+                            symbol_accounts[symbol] = []
+                        if acc_name not in symbol_accounts[symbol]:
+                            symbol_accounts[symbol].append(acc_name)
+        
+        return list(symbols), symbol_accounts
 
     async def fetch_trend_data(self):
         """Fetches historical data and builds the normalized comparison chart.

@@ -6,6 +6,7 @@ import reflex as rx
 from ..components.layout import page_layout
 from ..components.cards import metric_card
 from ..state import PortfolioState, State
+from ..styles.constants import MASK_SHARES, MASK_DOLLAR, MASK_PERCENT, MASK_DELTA
 
 
 def portfolio_page() -> rx.Component:
@@ -72,10 +73,6 @@ def _portfolio_content() -> rx.Component:
 
 def _stats_header() -> rx.Component:
     """Portfolio stats header with key metrics and privacy masking."""
-    # Use fixed-length masks that approximate typical value widths
-    MASK_DOLLAR = "********"  # ~$12,345.67
-    MASK_PERCENT = "*****"    # ~+12.34%
-    
     return rx.grid(
         rx.card(
             rx.vstack(
@@ -202,11 +199,6 @@ def _stock_row(h: dict) -> rx.Component:
     Only position-specific values are masked (shares, value, cost, P/L, allocation).
     Current price is market data and not masked.
     """
-    # Fixed-length masks approximating typical value widths
-    MASK_SHARES = "******"    # ~123.4567
-    MASK_DOLLAR = "********"  # ~$12,345.67
-    MASK_PERCENT = "*****"    # ~12.34%
-    
     return rx.table.row(
         rx.table.cell(rx.text(h["symbol"], weight="bold")),
         rx.table.cell(h["price"]),  # Market price - not masked
@@ -303,11 +295,6 @@ def _options_row(h: dict) -> rx.Component:
     Position-specific values are masked (strike, delta, cost basis, current value, P/L, weight).
     Underlying price and DTE are market data and not masked.
     """
-    # Fixed-length masks approximating typical value widths
-    MASK_DOLLAR = "********"  # ~$12,345.67
-    MASK_PERCENT = "*****"    # ~12.34%
-    MASK_DELTA = "******"     # ~0.1234
-    
     return rx.table.row(
         rx.table.cell(
             rx.hstack(

@@ -33,3 +33,25 @@ CARD_PADDING = "1em"
 
 # Container size (Reflex container size prop)
 CONTAINER_SIZE = "4"
+
+# Privacy mask strings (fixed-length to prevent layout shift)
+MASK_SHARES = "******"     # ~123.4567
+MASK_DOLLAR = "********"   # ~$12,345.67
+MASK_PERCENT = "*****"     # ~12.34%
+MASK_DELTA = "******"      # ~0.1234
+
+# Disclaimer banner colors
+DISCLAIMER_BG = "rgb(254, 249, 195)"
+DISCLAIMER_TEXT = "rgb(133, 100, 0)"
+DISCLAIMER_ICON = "rgb(161, 128, 0)"
+DISCLAIMER_BORDER = "rgb(234, 219, 102)"
+
+# Treemap P/L color gradients (base -> deep for intensity interpolation)
+# Green gradient for gains
+PL_GREEN_BASE = (187, 247, 208)
+PL_GREEN_DEEP = (34, 197, 94)
+# Red gradient for losses
+PL_RED_BASE = (254, 202, 202)
+PL_RED_DEEP = (239, 68, 68)
+# Neutral gray for N/A
+PL_NEUTRAL = (128, 128, 128)

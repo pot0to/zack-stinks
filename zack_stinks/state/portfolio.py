@@ -6,8 +6,54 @@ import plotly.graph_objects as go
 import pandas as pd
 from .base import BaseState
 from ..utils.cache import get_cached, set_cached, PORTFOLIO_TTL
+from ..styles.constants import PL_GREEN_BASE, PL_GREEN_DEEP, PL_RED_BASE, PL_RED_DEEP, PL_NEUTRAL
 
 SHARES_PER_CONTRACT = 100
+
+
+def _sort_key_for_column(x: dict, sort_col: str):
+    """Generic sort key function for table sorting.
+    
+    Handles None values (sorts to bottom), string columns (case-insensitive),
+    and numeric columns.
+    """
+    val = x.get(sort_col)
+    if val is None:
+        return (1, 0)  # None items sort last
+    if isinstance(val, str):
+        return (0, val.lower())
+    return (0, val)
+
+
+def _pl_to_color(pl_pct: float | None) -> str:
+    """Convert P/L percentage to RGB color string.
+    
+    Uses gradient interpolation: green for gains, red for losses, gray for N/A.
+    Intensity scales with magnitude (clamped to +/-100%).
+    """
+    if pl_pct is None:
+        return f"rgb({PL_NEUTRAL[0]}, {PL_NEUTRAL[1]}, {PL_NEUTRAL[2]})"
+    
+    clamped = max(-100, min(100, pl_pct))
+    intensity = abs(clamped) / 100
+    
+    if pl_pct >= 0:
+        base, deep = PL_GREEN_BASE, PL_GREEN_DEEP
+    else:
+        base, deep = PL_RED_BASE, PL_RED_DEEP
+    
+    r = int(base[0] - (base[0] - deep[0]) * intensity)
+    g = int(base[1] - (base[1] - deep[1]) * intensity)
+    b = int(base[2] - (base[2] - deep[2]) * intensity)
+    
+    return f"rgb({r}, {g}, {b})"
+
+
+def _toggle_sort(current_col: str, current_asc: bool, new_col: str) -> tuple[str, bool]:
+    """Generic sort toggle: flip direction if same column, else start ascending."""
+    if current_col == new_col:
+        return current_col, not current_asc
+    return new_col, True
 
 
 class PortfolioState(BaseState):
@@ -35,19 +81,15 @@ class PortfolioState(BaseState):
     
     def set_stock_sort(self, column: str):
         """Toggle sort direction if same column, otherwise set new column ascending."""
-        if self.stock_sort_column == column:
-            self.stock_sort_ascending = not self.stock_sort_ascending
-        else:
-            self.stock_sort_column = column
-            self.stock_sort_ascending = True
+        self.stock_sort_column, self.stock_sort_ascending = _toggle_sort(
+            self.stock_sort_column, self.stock_sort_ascending, column
+        )
     
     def set_options_sort(self, column: str):
         """Toggle sort direction if same column, otherwise set new column ascending."""
-        if self.options_sort_column == column:
-            self.options_sort_ascending = not self.options_sort_ascending
-        else:
-            self.options_sort_column = column
-            self.options_sort_ascending = True
+        self.options_sort_column, self.options_sort_ascending = _toggle_sort(
+            self.options_sort_column, self.options_sort_ascending, column
+        )
 
     @rx.var
     def account_names(self) -> list[str]:
@@ -109,18 +151,7 @@ class PortfolioState(BaseState):
         sort_col = self.stock_sort_column
         ascending = self.stock_sort_ascending
         
-        def sort_key(x):
-            val = x.get(sort_col)
-            # N/A values (None) go to bottom regardless of sort direction
-            if val is None:
-                return (1, 0)  # (is_none, value) - None items sort last
-            # Text columns sort alphabetically
-            if isinstance(val, str):
-                return (0, val.lower())
-            # Numeric columns sort by value
-            return (0, val)
-        
-        formatted.sort(key=sort_key, reverse=not ascending)
+        formatted.sort(key=lambda x: _sort_key_for_column(x, sort_col), reverse=not ascending)
         return formatted
     
     @rx.var
@@ -198,18 +229,7 @@ class PortfolioState(BaseState):
         sort_col = self.options_sort_column
         ascending = self.options_sort_ascending
         
-        def sort_key(x):
-            val = x.get(sort_col)
-            # N/A values (None) go to bottom regardless of sort direction
-            if val is None:
-                return (1, 0)
-            # Text columns sort alphabetically
-            if isinstance(val, str):
-                return (0, val.lower())
-            # Numeric columns sort by value
-            return (0, val)
-        
-        formatted.sort(key=sort_key, reverse=not ascending)
+        formatted.sort(key=lambda x: _sort_key_for_column(x, sort_col), reverse=not ascending)
         return formatted
     
     @rx.var
@@ -244,37 +264,11 @@ class PortfolioState(BaseState):
         if not raw_stocks and not raw_options:
             return go.Figure()
         
-        def pl_to_color(pl_pct: float | None) -> str:
-            """Convert P/L percentage to color. None = gray, positive = green, negative = red.
-            Uses lighter shades for readability with dark text."""
-            if pl_pct is None:
-                return "rgb(128, 128, 128)"  # Neutral gray for N/A
-            
-            # Clamp percentage to reasonable range for color scaling
-            clamped = max(-100, min(100, pl_pct))
-            # Normalize to 0-1 range (0 = neutral, 1 = max intensity)
-            intensity = abs(clamped) / 100
-            
-            if pl_pct >= 0:
-                # Green gradient: from light green to deeper green
-                # Base: rgb(187, 247, 208) -> Deep: rgb(34, 197, 94)
-                r = int(187 - (187 - 34) * intensity)
-                g = int(247 - (247 - 197) * intensity)
-                b = int(208 - (208 - 94) * intensity)
-            else:
-                # Red gradient: from light red to deeper red
-                # Base: rgb(254, 202, 202) -> Deep: rgb(239, 68, 68)
-                r = int(254 - (254 - 239) * intensity)
-                g = int(202 - (202 - 68) * intensity)
-                b = int(202 - (202 - 68) * intensity)
-            
-            return f"rgb({r}, {g}, {b})"
-        
         # Build combined lists for treemap
         labels = []
         values = []
         colors = []
-        hover_texts = []  # Custom hover with $ value and P/L %
+        hover_texts = []
         
         # Add stocks with P/L-based coloring
         for s in raw_stocks:
@@ -296,7 +290,7 @@ class PortfolioState(BaseState):
                 pl_pct_str = "N/A"
                 pl_dollar_str = "N/A"
             
-            colors.append(pl_to_color(pl_pct))
+            colors.append(_pl_to_color(pl_pct))
             if self.hide_portfolio_values:
                 hover_texts.append("*****<br>P/L: *****")
             else:
@@ -331,7 +325,7 @@ class PortfolioState(BaseState):
                 pl_pct_str = "N/A"
                 pl_dollar_str = "N/A"
             
-            colors.append(pl_to_color(pl_pct))
+            colors.append(_pl_to_color(pl_pct))
             if self.hide_portfolio_values:
                 hover_texts.append("*****<br>P/L: *****")
             else:
