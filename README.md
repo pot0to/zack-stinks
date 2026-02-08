@@ -69,27 +69,52 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-**Windows:**
-```powershell
+**Windows (Git Bash - Recommended):**
+
+Git Bash is included with Git for Windows and uses Unix-style commands, making it the easiest option.
+
+```bash
 # 1. Install Python from https://www.python.org/downloads/ (3.11+)
 #    During installation, check "Add Python to PATH"
 
 # 2. Install Git from https://git-scm.com/download/win
 #    Use default options during installation
 
-# 3. Open PowerShell or Command Prompt
-# 4. Navigate to where you want to store the project (e.g., Documents)
-cd ~\Documents
+# 3. Open Git Bash (right-click in any folder > "Git Bash Here", or search for it)
+# 4. Navigate to where you want to store the project
+cd ~/Documents
 
-# 5. Clone the repository
+# 5. Clone and enter the repository
 git clone https://github.com/pot0to/zack-stinks.git
 cd zack-stinks
 
-# 6. Create virtual environment
+# 6. Create and activate virtual environment
 python -m venv .venv
-.venv\Scripts\activate
+source .venv/Scripts/activate
 
 # 7. Install dependencies
+pip install -r requirements.txt
+```
+
+**Windows (PowerShell):**
+```powershell
+# After installing Python and Git (see above)
+cd ~\Documents
+git clone https://github.com/pot0to/zack-stinks.git
+cd zack-stinks
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+```
+
+**Windows (Command Prompt):**
+```cmd
+# After installing Python and Git (see above)
+cd %USERPROFILE%\Documents
+git clone https://github.com/pot0to/zack-stinks.git
+cd zack-stinks
+python -m venv .venv
+.venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
