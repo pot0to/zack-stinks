@@ -64,7 +64,7 @@ class PortfolioState(BaseState):
 
     all_stock_holdings: dict[str, list[dict]] = {}
     all_options_holdings: dict[str, list[dict]] = {}
-    metric_data: dict[str, dict[str, str]] = {}
+    metric_data: dict[str, dict[str, str | float]] = {}
 
     cash_balance: str = "$0.00"
     buying_power: str = "$0.00"
@@ -245,9 +245,25 @@ class PortfolioState(BaseState):
 
     @rx.var
     def selected_account_change(self) -> str:
-        # You'll need to store 'equity_change' in holdings_data during fetch to use here
-        # For now, returning a placeholder
-        return "+$0.00 (0.00%)"
+        """Daily P/L from Robinhood's portfolio profile (includes extended hours)."""
+        acc_num = self.account_map.get(self.selected_account)
+        if not acc_num:
+            return "+$0.00 (0.00%)"
+        
+        metrics = self.metric_data.get(acc_num, {})
+        equity = metrics.get("equity", 0)
+        prev_close = metrics.get("equity_prev_close", 0)
+        
+        if prev_close <= 0:
+            return "+$0.00 (0.00%)"
+        
+        daily_change = equity - prev_close
+        daily_change_pct = (daily_change / prev_close) * 100
+        
+        if daily_change >= 0:
+            return f"+${daily_change:,.2f} (+{daily_change_pct:.2f}%)"
+        else:
+            return f"-${abs(daily_change):,.2f} ({daily_change_pct:.2f}%)"
 
     @rx.var
     def portfolio_treemap(self) -> go.Figure:
@@ -352,17 +368,24 @@ class PortfolioState(BaseState):
     
     async def _process_single_account(self, name: str, acc_num: str) -> dict:
         """Process a single account's data. Returns dict with all account data."""
-        # Fetch profile, stocks, and options in parallel
-        profile_task = asyncio.to_thread(rs.profiles.load_account_profile, account_number=acc_num)
+        # Fetch account profile, portfolio profile, stocks, and options in parallel
+        account_profile_task = asyncio.to_thread(rs.profiles.load_account_profile, account_number=acc_num)
+        portfolio_profile_task = asyncio.to_thread(rs.profiles.load_portfolio_profile, account_number=acc_num)
         stocks_task = asyncio.to_thread(rs.account.get_open_stock_positions, account_number=acc_num)
         options_task = asyncio.to_thread(rs.options.get_open_option_positions, account_number=acc_num)
         
-        profile, stock_positions, option_positions = await asyncio.gather(
-            profile_task, stocks_task, options_task
+        account_profile, portfolio_profile, stock_positions, option_positions = await asyncio.gather(
+            account_profile_task, portfolio_profile_task, stocks_task, options_task
         )
         
-        c_str = f"${float(profile.get('cash', 0)):,.2f}"
-        b_str = f"${float(profile.get('buying_power', 0)):,.2f}"
+        c_str = f"${float(account_profile.get('cash', 0)):,.2f}"
+        b_str = f"${float(account_profile.get('buying_power', 0)):,.2f}"
+        
+        # Extract equity values for daily P/L calculation
+        # Use extended hours equity by default for most current value
+        # TODO: Consider adding UX toggle for "trading day" vs "extended hours" view
+        equity = float(portfolio_profile.get('extended_hours_equity') or portfolio_profile.get('equity') or 0)
+        equity_prev_close = float(portfolio_profile.get('adjusted_equity_previous_close') or portfolio_profile.get('equity_previous_close') or 0)
         
         # Process stocks
         acc_stocks = await self._process_stock_positions(stock_positions)
@@ -377,6 +400,8 @@ class PortfolioState(BaseState):
             "options": acc_options,
             "cash": c_str,
             "buying_power": b_str,
+            "equity": equity,
+            "equity_prev_close": equity_prev_close,
         }
     
     async def _process_stock_positions(self, stock_positions: list) -> list[dict]:
@@ -594,7 +619,12 @@ class PortfolioState(BaseState):
                 acc_num = result["acc_num"]
                 all_stocks[acc_num] = result["stocks"]
                 all_options[acc_num] = result["options"]
-                all_metrics[acc_num] = {"cash": result["cash"], "bp": result["buying_power"]}
+                all_metrics[acc_num] = {
+                    "cash": result["cash"],
+                    "bp": result["buying_power"],
+                    "equity": result["equity"],
+                    "equity_prev_close": result["equity_prev_close"],
+                }
 
             # Update state once with all data
             async with self:
