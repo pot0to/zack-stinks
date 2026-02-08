@@ -63,9 +63,10 @@ class BaseState(rx.State):
             else:
                 return False, f"Login error: {str(e)}"
 
-
     async def login_with_form(self):
         """Login using credentials from the UI form."""
+        from .portfolio import PortfolioState
+        
         if not self.login_username or not self.login_password:
             self.login_error = "Please enter both username and password."
             return
@@ -81,6 +82,8 @@ class BaseState(rx.State):
         
         if success:
             self.login_username = ""
+            # Start fetching portfolio data in background, then redirect
+            yield PortfolioState.fetch_all_portfolio_data
             yield rx.redirect("/")
         else:
             self.login_error = error or "Login failed."
@@ -89,6 +92,8 @@ class BaseState(rx.State):
 
     async def login_with_credentials_file(self):
         """Fallback login using credentials.json file."""
+        from .portfolio import PortfolioState
+        
         self.is_loading = True
         self.login_error = ""
         yield
@@ -102,6 +107,8 @@ class BaseState(rx.State):
         success, error = await self._perform_login(creds["username"], creds["password"])
         
         if success:
+            # Start fetching portfolio data in background, then redirect
+            yield PortfolioState.fetch_all_portfolio_data
             yield rx.redirect("/")
         else:
             self.login_error = error or "Login failed using credentials.json."
