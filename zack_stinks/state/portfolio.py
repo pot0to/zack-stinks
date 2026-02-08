@@ -554,7 +554,15 @@ class PortfolioState(BaseState):
             res = await asyncio.to_thread(rs.request_get, url, "regular")
             
             if res is None:
-                return rx.toast.error("Session expired. Please refresh the page.")
+                # Session expired - reset login state and redirect
+                async with self:
+                    self.is_logged_in = False
+                    self.account_name = "User"
+                    self.is_loading = False
+                return [
+                    rx.toast.error("Session expired. Please log in again."),
+                    rx.redirect("/login")
+                ]
             
             temp_map = {}
             for acc in res.get('results', []):
@@ -617,7 +625,18 @@ class PortfolioState(BaseState):
 
             return rx.toast.success("Portfolio Updated")
         except Exception as e:
-            return rx.toast.error(f"Sync failed: {str(e)}")
+            error_str = str(e)
+            # Check for 401 Unauthorized errors
+            if "401" in error_str or "Unauthorized" in error_str:
+                async with self:
+                    self.is_logged_in = False
+                    self.account_name = "User"
+                    self.is_loading = False
+                return [
+                    rx.toast.error("Session expired. Please log in again."),
+                    rx.redirect("/login")
+                ]
+            return rx.toast.error(f"Sync failed: {error_str}")
         finally:
             async with self:
                 self.is_loading = False
