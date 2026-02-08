@@ -1,16 +1,12 @@
-"""Sidebar navigation component."""
+"""Sidebar navigation component with theme-adaptive styling."""
 import reflex as rx
 from ..state import State
 from ..styles.constants import (
     SIDEBAR_WIDTH_OPEN,
     SIDEBAR_WIDTH_COLLAPSED,
     ACCENT_PRIMARY,
-    ACCENT_PRIMARY_HOVER,
     COLOR_SUCCESS,
     COLOR_NEUTRAL,
-    BG_SIDEBAR,
-    BG_HOVER,
-    BORDER_SUBTLE,
 )
 
 
@@ -22,7 +18,7 @@ def _nav_link(icon: str, label: str, href: str) -> rx.Component:
         padding="0.75em 1.25em",
         width="100%",
         border_radius="8px",
-        _hover={"background": BG_HOVER, "color": ACCENT_PRIMARY},
+        _hover={"background": rx.color("gray", 4), "color": ACCENT_PRIMARY},
     )
 
 
@@ -32,12 +28,12 @@ def _privacy_toggle() -> rx.Component:
         rx.icon(
             rx.cond(State.hide_portfolio_values, "eye-off", "eye"),
             size=16,
-            color="rgba(220, 220, 220, 0.9)",
+            color=rx.color("gray", 11),
         ),
         rx.text(
             rx.cond(State.hide_portfolio_values, "Values Hidden", "Hide Values"),
             size="1",
-            color="rgba(220, 220, 220, 0.9)",
+            color=rx.color("gray", 11),
         ),
         align="center",
         spacing="2",
@@ -46,7 +42,7 @@ def _privacy_toggle() -> rx.Component:
         border_radius="8px",
         cursor="pointer",
         background=rx.cond(State.hide_portfolio_values, "rgba(168, 85, 247, 0.2)", "transparent"),
-        _hover={"background": BG_HOVER},
+        _hover={"background": rx.color("gray", 4)},
         on_click=State.toggle_hide_values,
     )
     
@@ -54,7 +50,7 @@ def _privacy_toggle() -> rx.Component:
         rx.icon(
             rx.cond(State.hide_portfolio_values, "eye-off", "eye"),
             size=18,
-            color="rgba(220, 220, 220, 0.9)",
+            color=rx.color("gray", 11),
             cursor="pointer",
             on_click=State.toggle_hide_values,
         ),
@@ -73,11 +69,16 @@ def _status_indicator() -> rx.Component:
             height="10px",
             background_color=COLOR_SUCCESS,
             border_radius="50%",
-            box_shadow=f"0 0 10px rgba(34, 197, 94, 0.6)",
+            box_shadow="0 0 10px rgba(34, 197, 94, 0.6)",
         ),
         rx.vstack(
-            rx.text(f"Connected as {State.account_name}", size="1", weight="bold", color="rgba(240, 240, 240, 0.95)"),
-            rx.text("Robinhood Active", size="1", color="rgba(200, 200, 200, 0.8)"),
+            rx.text(
+                f"Connected as {State.account_name}",
+                size="1",
+                weight="bold",
+                color=rx.color("gray", 12),
+            ),
+            rx.text("Robinhood Active", size="1", color=rx.color("gray", 10)),
             spacing="0",
             align_items="start",
         ),
@@ -99,8 +100,13 @@ def _status_indicator() -> rx.Component:
             border_radius="50%",
         ),
         rx.vstack(
-            rx.text("Not Connected", size="1", weight="bold", color="rgba(240, 240, 240, 0.95)"),
-            rx.text("Robinhood Offline", size="1", color="rgba(200, 200, 200, 0.8)"),
+            rx.text(
+                "Not Connected",
+                size="1",
+                weight="bold",
+                color=rx.color("gray", 12),
+            ),
+            rx.text("Robinhood Offline", size="1", color=rx.color("gray", 10)),
             spacing="0",
             align_items="start",
         ),
@@ -146,7 +152,7 @@ def sidebar() -> rx.Component:
                     rx.icon(tag="menu", size=24),
                     on_click=State.toggle_sidebar,
                     background="transparent",
-                    _hover={"background": "rgba(255, 255, 255, 0.1)"},
+                    _hover={"background": rx.color("gray", 4)},
                     _focus={"box_shadow": "none"},
                     padding="0.75em",
                     border_radius="8px",
@@ -190,8 +196,8 @@ def sidebar() -> rx.Component:
         left="0",
         top="0",
         z_index="100",
-        background_color=BG_SIDEBAR,
-        border_right=BORDER_SUBTLE,
+        background_color=rx.color("gray", 2),
+        border_right=f"1px solid {rx.color('gray', 4)}",
         width=rx.cond(State.sidebar_open, SIDEBAR_WIDTH_OPEN, SIDEBAR_WIDTH_COLLAPSED),
         transition="width 0.3s ease",
         overflow="hidden",

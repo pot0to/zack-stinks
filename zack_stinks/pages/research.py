@@ -3,7 +3,7 @@ import reflex as rx
 from ..components.layout import page_layout
 from ..components.cards import stat_card
 from ..state.research import ResearchState
-from ..styles.constants import ACCENT_PRIMARY, ACCENT_PRIMARY_HOVER, BG_CARD, BORDER_CARD
+from ..styles.constants import ACCENT_PRIMARY, ACCENT_PRIMARY_HOVER
 
 
 def research_page() -> rx.Component:
@@ -30,9 +30,9 @@ def _research_content() -> rx.Component:
             rx.box(
                 rx.plotly(data=ResearchState.price_chart, style={"width": "100%", "height": "100%"}),
                 width="100%",
-                background=BG_CARD,
+                background=rx.color("gray", 2),
                 border_radius="12px",
-                border=BORDER_CARD,
+                border=f"1px solid {rx.color('gray', 4)}",
                 padding="1em",
             ),
             spacing="5",

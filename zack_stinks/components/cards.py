@@ -1,6 +1,6 @@
 """Reusable card components for displaying metrics and stats."""
 import reflex as rx
-from ..styles.constants import BG_CARD, BORDER_CARD, CARD_PADDING
+from ..styles.constants import CARD_PADDING
 
 
 def stat_card(
@@ -20,7 +20,7 @@ def stat_card(
         badge: Optional badge component to display
     """
     children = [
-        rx.text(label, size="1", color="gray"),
+        rx.text(label, size="1", color=rx.color("gray", 10)),
         rx.text(value, size="6", weight="bold"),
     ]
     if badge is not None:
@@ -31,9 +31,9 @@ def stat_card(
     return rx.box(
         rx.vstack(*children, spacing="1", align_items="start"),
         padding=CARD_PADDING,
-        background=BG_CARD,
+        background=rx.color("gray", 2),
         border_radius="8px",
-        border=BORDER_CARD,
+        border=f"1px solid {rx.color('gray', 4)}",
         min_width="140px",
     )
 
@@ -53,12 +53,12 @@ def metric_card(
         badge: Optional badge component
     """
     children = [
-        rx.text(title, size="2", color="gray", weight="medium"),
+        rx.text(title, size="2", color=rx.color("gray", 10), weight="medium"),
         rx.heading(value, size="7"),
     ]
     if badge is not None:
         children.append(badge)
     if subtext:
-        children.append(rx.text(subtext, size="1", color="slate"))
+        children.append(rx.text(subtext, size="1", color=rx.color("gray", 9)))
     
     return rx.card(rx.vstack(*children, align_items="start", spacing="1"))

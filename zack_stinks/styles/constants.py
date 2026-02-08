@@ -18,14 +18,16 @@ COLOR_ERROR = "rgb(239, 68, 68)"
 COLOR_WARNING = "rgb(250, 204, 21)"
 COLOR_NEUTRAL = "rgb(156, 163, 175)"
 
-# Borders
-BORDER_SUBTLE = "1px solid rgba(255,255,255,0.05)"
-BORDER_CARD = "1px solid rgba(255,255,255,0.1)"
+# Borders - now using theme-aware approach via rx.color() in components
+# Legacy static values kept for reference:
+# BORDER_SUBTLE = "1px solid rgba(255,255,255,0.05)"
+# BORDER_CARD = "1px solid rgba(255,255,255,0.1)"
 
-# Backgrounds
-BG_CARD = "rgba(255,255,255,0.02)"
-BG_HOVER = "rgba(255,255,255,0.05)"
-BG_SIDEBAR = "rgba(15, 15, 15, 0.98)"
+# Backgrounds - now using theme-aware approach via rx.color() in components
+# Legacy static values kept for reference:
+# BG_CARD = "rgba(255,255,255,0.02)"
+# BG_HOVER = "rgba(255,255,255,0.05)"
+# BG_SIDEBAR = "rgba(15, 15, 15, 0.98)"
 
 # Spacing
 CONTENT_PADDING = "2em"
