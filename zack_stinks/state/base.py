@@ -35,6 +35,26 @@ class BaseState(rx.State):
         self.mfa_input = value
         self.login_error = ""
 
+    async def validate_existing_session(self) -> bool:
+        """Check if an existing robin_stocks pickle session is still valid.
+        
+        Called on page load to restore login state from the pickle file
+        without requiring the user to re-enter credentials.
+        """
+        if self.is_logged_in:
+            return True
+        
+        try:
+            user_profile = await asyncio.to_thread(rs.account.load_user_profile)
+            if user_profile and user_profile.get("first_name"):
+                self.account_name = user_profile.get("first_name", "User")
+                self.is_logged_in = True
+                return True
+        except Exception:
+            pass
+        
+        return False
+
     async def _perform_login(self, username: str, password: str):
         """Common login logic for both form and credentials file methods."""
         try:

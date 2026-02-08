@@ -17,16 +17,21 @@ class MarketState(BaseState):
     portfolio_data_available: bool = False
 
     async def setup_market_page(self):
-        """Setup market page - check login status and fetch data."""
-        # If not logged in, redirect to login page
-        if not self.is_logged_in:
-            yield rx.redirect("/login")
-            return
-        # Fetch market data and trend chart in parallel (don't wait for portfolio)
+        """Setup market page - validate session and fetch data.
+        
+        Market data is public and always fetched. Portfolio signals
+        require authentication and are skipped if not logged in.
+        """
+        # Try to restore session from pickle if available
+        await self.validate_existing_session()
+        
+        # Fetch public market data regardless of login status
         yield MarketState.fetch_market_data
         yield MarketState.fetch_trend_data
-        # Portfolio signals are fetched separately, non-blocking
-        yield MarketState.fetch_portfolio_signals_async
+        
+        # Portfolio signals require authentication
+        if self.is_logged_in:
+            yield MarketState.fetch_portfolio_signals_async
 
     async def fetch_market_data(self):
         self.is_loading = True

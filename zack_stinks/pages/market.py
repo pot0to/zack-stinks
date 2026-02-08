@@ -1,7 +1,7 @@
 """Market Overview page UI."""
 import reflex as rx
 from ..components.layout import page_layout
-from ..state import MarketState
+from ..state import MarketState, State
 
 
 def market_page() -> rx.Component:
@@ -36,6 +36,28 @@ def _market_content() -> rx.Component:
 
 def _portfolio_spotlight() -> rx.Component:
     """Portfolio spotlight section with tabbed gap events, MA proximity, and below MA alerts."""
+    # Login required state
+    login_required_view = rx.center(
+        rx.vstack(
+            rx.icon("lock", size=24, color="gray"),
+            rx.text("Login Required", weight="medium", color="gray"),
+            rx.text(
+                "Sign in to Robinhood to see alerts for your portfolio holdings.",
+                size="2",
+                color="gray",
+                text_align="center",
+            ),
+            rx.link(
+                rx.button("Sign In", variant="outline", size="2"),
+                href="/login",
+            ),
+            spacing="2",
+            align="center",
+        ),
+        padding="2em",
+        width="100%",
+    )
+    
     # Loading state
     loading_view = rx.center(
         rx.hstack(
@@ -47,7 +69,7 @@ def _portfolio_spotlight() -> rx.Component:
         width="100%",
     )
     
-    # No portfolio data state
+    # No portfolio data state (logged in but portfolio not loaded yet)
     no_data_view = rx.center(
         rx.vstack(
             rx.icon("briefcase", size=24, color="gray"),
@@ -107,18 +129,25 @@ def _portfolio_spotlight() -> rx.Component:
         width="100%",
     )
     
+    # Determine which view to show based on auth and data state
+    authenticated_content = rx.cond(
+        MarketState.portfolio_signals_loading,
+        loading_view,
+        rx.cond(
+            MarketState.portfolio_data_available,
+            data_view,
+            no_data_view,
+        ),
+    )
+    
     return rx.card(
         rx.vstack(
             rx.text("Portfolio Spotlight", weight="bold", size="4"),
             rx.divider(margin_y="1em"),
             rx.cond(
-                MarketState.portfolio_signals_loading,
-                loading_view,
-                rx.cond(
-                    MarketState.portfolio_data_available,
-                    data_view,
-                    no_data_view,
-                ),
+                State.is_logged_in,
+                authenticated_content,
+                login_required_view,
             ),
             align_items="start",
             width="100%",

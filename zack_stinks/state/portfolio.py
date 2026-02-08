@@ -345,12 +345,10 @@ class PortfolioState(BaseState):
         return fig
     
     async def setup_portfolio_page(self):
-        """Setup portfolio page - check login status and fetch data."""
-        # If not logged in, redirect to login page
-        if not self.is_logged_in:
-            yield rx.redirect("/login")
-            return
-        yield PortfolioState.fetch_all_portfolio_data
+        """Setup portfolio page - validate session and fetch data if logged in."""
+        await self.validate_existing_session()
+        if self.is_logged_in:
+            yield PortfolioState.fetch_all_portfolio_data
     
     async def _process_single_account(self, name: str, acc_num: str) -> dict:
         """Process a single account's data. Returns dict with all account data."""

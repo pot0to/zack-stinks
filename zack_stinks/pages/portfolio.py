@@ -2,7 +2,7 @@
 import reflex as rx
 from ..components.layout import page_layout
 from ..components.cards import metric_card
-from ..state import PortfolioState
+from ..state import PortfolioState, State
 
 
 def portfolio_page() -> rx.Component:
@@ -10,25 +10,55 @@ def portfolio_page() -> rx.Component:
     return page_layout(_portfolio_content(), use_container=False)
 
 
+def _login_required_view() -> rx.Component:
+    """Placeholder shown when user is not authenticated."""
+    return rx.center(
+        rx.vstack(
+            rx.icon("lock", size=48, color="gray"),
+            rx.text("Login Required", size="6", weight="bold", color="gray"),
+            rx.text(
+                "Sign in to Robinhood to view your portfolio holdings and performance.",
+                size="3",
+                color="gray",
+                text_align="center",
+                max_width="400px",
+            ),
+            rx.link(
+                rx.button("Sign In", size="3", variant="solid"),
+                href="/login",
+            ),
+            spacing="4",
+            align="center",
+            padding="4em",
+        ),
+        width="100%",
+        min_height="60vh",
+    )
+
+
 def _portfolio_content() -> rx.Component:
     """Main portfolio content with account tabs."""
     return rx.container(
         rx.vstack(
             rx.heading("My Portfolio", size="8", margin_bottom="0.5em"),
-            rx.tabs.root(
-                rx.tabs.list(
+            rx.cond(
+                State.is_logged_in,
+                rx.tabs.root(
+                    rx.tabs.list(
+                        rx.foreach(
+                            PortfolioState.account_names,
+                            lambda name: rx.tabs.trigger(name, value=name),
+                        ),
+                    ),
                     rx.foreach(
                         PortfolioState.account_names,
-                        lambda name: rx.tabs.trigger(name, value=name),
+                        lambda name: rx.tabs.content(_account_summary(name), value=name),
                     ),
+                    value=PortfolioState.selected_account,
+                    on_change=PortfolioState.change_tab,
+                    width="100%",
                 ),
-                rx.foreach(
-                    PortfolioState.account_names,
-                    lambda name: rx.tabs.content(_account_summary(name), value=name),
-                ),
-                value=PortfolioState.selected_account,
-                on_change=PortfolioState.change_tab,
-                width="100%",
+                _login_required_view(),
             ),
         ),
         width="100%",
