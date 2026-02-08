@@ -32,10 +32,12 @@ def _privacy_toggle() -> rx.Component:
         rx.icon(
             rx.cond(State.hide_portfolio_values, "eye-off", "eye"),
             size=16,
+            color="rgba(220, 220, 220, 0.9)",
         ),
         rx.text(
             rx.cond(State.hide_portfolio_values, "Values Hidden", "Hide Values"),
             size="1",
+            color="rgba(220, 220, 220, 0.9)",
         ),
         align="center",
         spacing="2",
@@ -52,6 +54,7 @@ def _privacy_toggle() -> rx.Component:
         rx.icon(
             rx.cond(State.hide_portfolio_values, "eye-off", "eye"),
             size=18,
+            color="rgba(220, 220, 220, 0.9)",
             cursor="pointer",
             on_click=State.toggle_hide_values,
         ),
@@ -73,8 +76,8 @@ def _status_indicator() -> rx.Component:
             box_shadow=f"0 0 10px rgba(34, 197, 94, 0.6)",
         ),
         rx.vstack(
-            rx.text(f"Connected as {State.account_name}", size="1", weight="bold"),
-            rx.text("Robinhood Active", size="1", color="gray"),
+            rx.text(f"Connected as {State.account_name}", size="1", weight="bold", color="rgba(240, 240, 240, 0.95)"),
+            rx.text("Robinhood Active", size="1", color="rgba(200, 200, 200, 0.8)"),
             spacing="0",
             align_items="start",
         ),
@@ -96,8 +99,8 @@ def _status_indicator() -> rx.Component:
             border_radius="50%",
         ),
         rx.vstack(
-            rx.text("Not Connected", size="1", weight="bold"),
-            rx.text("Robinhood Offline", size="1", color="gray"),
+            rx.text("Not Connected", size="1", weight="bold", color="rgba(240, 240, 240, 0.95)"),
+            rx.text("Robinhood Offline", size="1", color="rgba(200, 200, 200, 0.8)"),
             spacing="0",
             align_items="start",
         ),
