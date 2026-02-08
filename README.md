@@ -75,6 +75,7 @@ Git Bash is included with Git for Windows and uses Unix-style commands, making i
 
 ```bash
 # 1. Install Python from https://www.python.org/downloads/ (3.11+)
+#    IMPORTANT: Use the python.org installer, NOT the Microsoft Store version
 #    During installation, check "Add Python to PATH"
 
 # 2. Install Git from https://git-scm.com/download/win
