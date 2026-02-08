@@ -275,11 +275,13 @@ class PortfolioState(BaseState):
         labels = []
         values = []
         colors = []
+        hover_texts = []  # Custom hover with $ value and P/L %
         
         # Add stocks with P/L-based coloring
         for s in raw_stocks:
             labels.append(s.get("symbol", "???"))
-            values.append(abs(float(s.get("raw_equity", 0))))
+            value = abs(float(s.get("raw_equity", 0)))
+            values.append(value)
             
             # Calculate P/L percentage for color
             cost_basis = float(s.get("cost_basis", 0))
@@ -288,27 +290,47 @@ class PortfolioState(BaseState):
             
             if cost_basis_reliable and cost_basis > 0:
                 pl_pct = (pl / cost_basis) * 100
+                pl_pct_str = f"{pl_pct:+.2f}%"
+                pl_dollar_str = f"+${pl:,.2f}" if pl >= 0 else f"-${abs(pl):,.2f}"
             else:
                 pl_pct = None
+                pl_pct_str = "N/A"
+                pl_dollar_str = "N/A"
             
             colors.append(pl_to_color(pl_pct))
+            hover_texts.append(f"${value:,.2f}<br>P/L: {pl_dollar_str} ({pl_pct_str})")
         
-        # Add options with P/L-based coloring
+        # Add options aggregated by ticker symbol
+        options_by_symbol: dict[str, dict] = {}
         for o in raw_options:
             symbol = o.get("symbol", "???")
-            labels.append(f"{symbol} (Opt)")
-            values.append(abs(float(o.get("raw_equity", 0))))
-            
-            # Calculate P/L percentage for color
+            value = abs(float(o.get("raw_equity", 0)))
             cost_basis = float(o.get("cost_basis", 0))
             pl = float(o.get("pl", 0))
             
-            if cost_basis > 0:
-                pl_pct = (pl / cost_basis) * 100
+            if symbol not in options_by_symbol:
+                options_by_symbol[symbol] = {"value": 0, "cost_basis": 0, "pl": 0}
+            
+            options_by_symbol[symbol]["value"] += value
+            options_by_symbol[symbol]["cost_basis"] += cost_basis
+            options_by_symbol[symbol]["pl"] += pl
+        
+        for symbol, data in options_by_symbol.items():
+            labels.append(f"{symbol} (Opt)")
+            values.append(data["value"])
+            
+            # Calculate combined P/L percentage
+            if data["cost_basis"] > 0:
+                pl_pct = (data["pl"] / data["cost_basis"]) * 100
+                pl_pct_str = f"{pl_pct:+.2f}%"
+                pl_dollar_str = f"+${data['pl']:,.2f}" if data["pl"] >= 0 else f"-${abs(data['pl']):,.2f}"
             else:
                 pl_pct = None
+                pl_pct_str = "N/A"
+                pl_dollar_str = "N/A"
             
             colors.append(pl_to_color(pl_pct))
+            hover_texts.append(f"${data['value']:,.2f}<br>P/L: {pl_dollar_str} ({pl_pct_str})")
 
         fig = go.Figure(go.Treemap(
             labels=labels,
@@ -316,7 +338,9 @@ class PortfolioState(BaseState):
             values=values,
             textinfo="label+percent parent",
             marker=dict(colors=colors),
-            textfont=dict(color="black"),  # Dark text for readability on light backgrounds
+            textfont=dict(color="black"),
+            hovertemplate="<b>%{label}</b><br>%{customdata}<extra></extra>",
+            customdata=hover_texts,
         ))
         fig.update_layout(margin=dict(t=0, l=0, r=0, b=0), template="plotly_dark", height=300)
         return fig
