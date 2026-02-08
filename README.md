@@ -54,6 +54,9 @@ zack_stinks/
 # Install Python if needed
 brew install python@3.11
 
+# Navigate to where you want to store the project (e.g., Documents or a Dev folder)
+cd ~/Documents
+
 # Clone the repository
 git clone https://github.com/pot0to/zack-stinks.git
 cd zack-stinks
@@ -74,15 +77,19 @@ pip install -r requirements.txt
 # 2. Install Git from https://git-scm.com/download/win
 #    Use default options during installation
 
-# 3. Open PowerShell or Command Prompt, then clone the repository
+# 3. Open PowerShell or Command Prompt
+# 4. Navigate to where you want to store the project (e.g., Documents)
+cd ~\Documents
+
+# 5. Clone the repository
 git clone https://github.com/pot0to/zack-stinks.git
 cd zack-stinks
 
-# 4. Create virtual environment
+# 6. Create virtual environment
 python -m venv .venv
 .venv\Scripts\activate
 
-# 5. Install dependencies
+# 7. Install dependencies
 pip install -r requirements.txt
 ```
 
