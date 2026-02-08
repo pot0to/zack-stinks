@@ -11,6 +11,7 @@ class MarketState(BaseState):
     trend_fig: go.Figure = go.Figure()
     gap_events: list[dict] = []
     ma_proximity_events: list[dict] = []
+    below_ma_200_events: list[dict] = []
     # Track portfolio spotlight loading state
     portfolio_signals_loading: bool = False
     portfolio_data_available: bool = False
@@ -66,18 +67,34 @@ class MarketState(BaseState):
         
         self.portfolio_data_available = True
         
-        # Collect unique symbols from portfolio
+        # Collect unique symbols from portfolio with account ownership
         symbols = set()
-        for acc_holdings in portfolio_state.all_stock_holdings.values():
+        symbol_accounts: dict[str, list[str]] = {}
+        
+        # Build reverse map: account_number -> display_name
+        acc_num_to_name = {v: k for k, v in portfolio_state.account_map.items()}
+        
+        for acc_num, acc_holdings in portfolio_state.all_stock_holdings.items():
+            acc_name = acc_num_to_name.get(acc_num, acc_num)
             for holding in acc_holdings:
                 symbol = holding.get("symbol", "")
                 if symbol:
                     symbols.add(symbol)
-        for acc_holdings in portfolio_state.all_options_holdings.values():
+                    if symbol not in symbol_accounts:
+                        symbol_accounts[symbol] = []
+                    if acc_name not in symbol_accounts[symbol]:
+                        symbol_accounts[symbol].append(acc_name)
+        
+        for acc_num, acc_holdings in portfolio_state.all_options_holdings.items():
+            acc_name = acc_num_to_name.get(acc_num, acc_num)
             for holding in acc_holdings:
                 symbol = holding.get("symbol", "")
                 if symbol:
                     symbols.add(symbol)
+                    if symbol not in symbol_accounts:
+                        symbol_accounts[symbol] = []
+                    if acc_name not in symbol_accounts[symbol]:
+                        symbol_accounts[symbol].append(acc_name)
         
         symbol_list = list(symbols)
         
@@ -88,6 +105,7 @@ class MarketState(BaseState):
             if cached:
                 self.gap_events = cached["gap_events"]
                 self.ma_proximity_events = cached["ma_proximity_events"]
+                self.below_ma_200_events = cached.get("below_ma_200_events", [])
                 self.portfolio_signals_loading = False
                 return
             
@@ -95,17 +113,22 @@ class MarketState(BaseState):
             analyzer = StockAnalyzer()
             gap_task = asyncio.to_thread(analyzer.detect_gap_events, symbol_list)
             ma_task = asyncio.to_thread(analyzer.detect_ma_proximity, symbol_list)
+            below_ma_task = asyncio.to_thread(analyzer.detect_below_ma_200, symbol_list, symbol_accounts)
             
-            self.gap_events, self.ma_proximity_events = await asyncio.gather(gap_task, ma_task)
+            self.gap_events, self.ma_proximity_events, self.below_ma_200_events = await asyncio.gather(
+                gap_task, ma_task, below_ma_task
+            )
             
             # Cache results
             set_cached(cache_key, {
                 "gap_events": self.gap_events,
                 "ma_proximity_events": self.ma_proximity_events,
+                "below_ma_200_events": self.below_ma_200_events,
             }, DEFAULT_TTL)
         else:
             self.gap_events = []
             self.ma_proximity_events = []
+            self.below_ma_200_events = []
         
         self.portfolio_signals_loading = False
 

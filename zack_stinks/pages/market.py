@@ -35,7 +35,7 @@ def _market_content() -> rx.Component:
 
 
 def _portfolio_spotlight() -> rx.Component:
-    """Portfolio spotlight section with gap events and MA proximity."""
+    """Portfolio spotlight section with tabbed gap events, MA proximity, and below MA alerts."""
     # Loading state
     loading_view = rx.center(
         rx.hstack(
@@ -69,44 +69,41 @@ def _portfolio_spotlight() -> rx.Component:
         width="100%",
     )
     
-    # Data loaded view
-    data_view = rx.vstack(
-        rx.text("Price Gaps", weight="medium", size="3", color="gray"),
-        rx.cond(
-            MarketState.gap_events.length() > 0,
-            rx.table.root(
-                rx.table.header(
-                    rx.table.row(
-                        rx.table.column_header_cell("Ticker"),
-                        rx.table.column_header_cell("Type"),
-                        rx.table.column_header_cell("% Change"),
-                        rx.table.column_header_cell("Volume"),
-                    ),
+    # Tabbed data view
+    data_view = rx.tabs.root(
+        rx.tabs.list(
+            rx.tabs.trigger(
+                rx.hstack(
+                    rx.icon("zap", size=14),
+                    rx.text("Price Gaps"),
+                    spacing="2",
+                    align="center",
                 ),
-                rx.table.body(rx.foreach(MarketState.gap_events, _gap_event_row)),
-                width="100%",
+                value="gaps",
             ),
-            rx.text("No gap events detected in portfolio holdings.", color="gray", size="2"),
-        ),
-        rx.divider(margin_y="1em"),
-        rx.text("Near Key Levels", weight="medium", size="3", color="gray"),
-        rx.cond(
-            MarketState.ma_proximity_events.length() > 0,
-            rx.table.root(
-                rx.table.header(
-                    rx.table.row(
-                        rx.table.column_header_cell("Ticker"),
-                        rx.table.column_header_cell("Price"),
-                        rx.table.column_header_cell("MA Value"),
-                        rx.table.column_header_cell("Offset"),
-                    ),
+            rx.tabs.trigger(
+                rx.hstack(
+                    rx.icon("target", size=14),
+                    rx.text("Near Key Levels"),
+                    spacing="2",
+                    align="center",
                 ),
-                rx.table.body(rx.foreach(MarketState.ma_proximity_events, _ma_proximity_row)),
-                width="100%",
+                value="ma_proximity",
             ),
-            rx.text("No positions near key moving averages.", color="gray", size="2"),
+            rx.tabs.trigger(
+                rx.hstack(
+                    rx.icon("triangle-alert", size=14),
+                    rx.text("Below 200d MA"),
+                    spacing="2",
+                    align="center",
+                ),
+                value="below_ma",
+            ),
         ),
-        align_items="start",
+        rx.tabs.content(_gap_events_content(), value="gaps", padding_top="1em"),
+        rx.tabs.content(_ma_proximity_content(), value="ma_proximity", padding_top="1em"),
+        rx.tabs.content(_below_ma_content(), value="below_ma", padding_top="1em"),
+        default_value="gaps",
         width="100%",
     )
     
@@ -129,6 +126,86 @@ def _portfolio_spotlight() -> rx.Component:
         width="100%",
         margin_top="2em",
         padding="1em",
+    )
+
+
+def _gap_events_content() -> rx.Component:
+    """Gap events tab content."""
+    return rx.cond(
+        MarketState.gap_events.length() > 0,
+        rx.table.root(
+            rx.table.header(
+                rx.table.row(
+                    rx.table.column_header_cell("Ticker"),
+                    rx.table.column_header_cell("Type"),
+                    rx.table.column_header_cell("% Change"),
+                    rx.table.column_header_cell("Volume"),
+                ),
+            ),
+            rx.table.body(rx.foreach(MarketState.gap_events, _gap_event_row)),
+            width="100%",
+        ),
+        rx.text("No gap events detected in portfolio holdings.", color="gray", size="2"),
+    )
+
+
+def _ma_proximity_content() -> rx.Component:
+    """MA proximity tab content."""
+    return rx.cond(
+        MarketState.ma_proximity_events.length() > 0,
+        rx.table.root(
+            rx.table.header(
+                rx.table.row(
+                    rx.table.column_header_cell("Ticker"),
+                    rx.table.column_header_cell("Price"),
+                    rx.table.column_header_cell("MA Value"),
+                    rx.table.column_header_cell("Offset"),
+                ),
+            ),
+            rx.table.body(rx.foreach(MarketState.ma_proximity_events, _ma_proximity_row)),
+            width="100%",
+        ),
+        rx.text("No positions near key moving averages.", color="gray", size="2"),
+    )
+
+
+def _below_ma_content() -> rx.Component:
+    """Below 200-day MA tab content."""
+    return rx.cond(
+        MarketState.below_ma_200_events.length() > 0,
+        rx.table.root(
+            rx.table.header(
+                rx.table.row(
+                    rx.table.column_header_cell("Ticker"),
+                    rx.table.column_header_cell("Price"),
+                    rx.table.column_header_cell("200d MA"),
+                    rx.table.column_header_cell("% Below"),
+                    rx.table.column_header_cell("Accounts"),
+                ),
+            ),
+            rx.table.body(rx.foreach(MarketState.below_ma_200_events, _below_ma_row)),
+            width="100%",
+        ),
+        rx.text("No holdings currently below their 200-day moving average.", color="gray", size="2"),
+    )
+
+
+def _below_ma_row(event: dict) -> rx.Component:
+    """Table row for below 200-day MA event."""
+    return rx.table.row(
+        rx.table.cell(rx.text(event["symbol"], weight="bold")),
+        rx.table.cell(event["price"]),
+        rx.table.cell(event["ma_200_value"]),
+        rx.table.cell(
+            rx.text(
+                event["pct_below"], "%",
+                color="red",
+                weight="medium",
+            )
+        ),
+        rx.table.cell(
+            rx.text(event["accounts"], size="2", color="gray")
+        ),
     )
 
 

@@ -191,3 +191,45 @@ class StockAnalyzer:
         # Sort by absolute proximity (closest to MA first)
         events.sort(key=lambda x: x["abs_offset"])
         return events
+
+    def detect_below_ma_200(self, symbols: list[str], symbol_accounts: dict[str, list[str]]) -> list[dict]:
+        """
+        Detect stocks trading below their 200-day moving average.
+        
+        Returns list of events with symbol, price, MA value, % below, and accounts holding.
+        Sorted by percentage below MA (most underwater first).
+        """
+        from .utils.technical import get_stock_ma_data
+        
+        events = []
+        
+        for symbol in symbols:
+            try:
+                ma_data = get_stock_ma_data(symbol, period="1y")
+                current_price = ma_data["current_price"]
+                
+                if current_price is None or ma_data["ma_200"] is None:
+                    continue
+                
+                pct_from_200 = ma_data["pct_from_200"]
+                if pct_from_200 is None or pct_from_200 >= 0:
+                    continue
+                
+                accounts = symbol_accounts.get(symbol, [])
+                
+                events.append({
+                    "symbol": symbol,
+                    "price": f"${current_price:,.2f}",
+                    "ma_200_value": f"${ma_data['ma_200']:,.2f}",
+                    "pct_below": round(pct_from_200, 2),
+                    "pct_below_val": pct_from_200,
+                    "accounts": ", ".join(accounts) if accounts else "Unknown",
+                })
+                
+            except Exception as e:
+                print(f"Error detecting below MA 200 for {symbol}: {e}")
+                continue
+        
+        # Sort by percentage below (most underwater first)
+        events.sort(key=lambda x: x["pct_below_val"])
+        return events
