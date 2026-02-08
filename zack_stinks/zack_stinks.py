@@ -6,6 +6,7 @@ from .state.research import ResearchState
 from .pages.market import market_page
 from .pages.portfolio import portfolio_page
 from .pages.research import research_page
+from .pages.login import login_page
 
 # App with dark theme (color constants are optimized for dark backgrounds)
 # Note: For true adaptive light/dark, colors would need to use Reflex theme tokens
@@ -15,6 +16,12 @@ app = rx.App(
         accent_color="purple",
         radius="medium",
     )
+)
+
+# Login Page
+app.add_page(
+    login_page,
+    route="/login",
 )
 
 # Market Overview Page

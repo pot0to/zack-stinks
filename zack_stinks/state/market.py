@@ -15,6 +15,11 @@ class MarketState(BaseState):
     _portfolio_symbols: list[str] = []
 
     async def setup_market_page(self):
+        """Setup market page - check login status and fetch data."""
+        # If not logged in, redirect to login page
+        if not self.is_logged_in:
+            yield rx.redirect("/login")
+            return
         # Fetch market data and trend chart in parallel (don't wait for portfolio)
         yield MarketState.fetch_market_data
         yield MarketState.fetch_trend_data

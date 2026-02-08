@@ -127,7 +127,15 @@ If you forgot to check "Add Python to PATH" during installation, you can either 
 
 ### Configuration
 
-Create a `credentials.json` file in the project root:
+The app now supports two authentication methods:
+
+**Option 1: Login Form (Recommended)**
+
+Simply run the app and you'll be presented with a login form where you can enter your Robinhood email and password. Your credentials are sent directly to Robinhood over HTTPS and are not stored locally. If MFA is required, you'll be prompted to enter your code.
+
+**Option 2: credentials.json (Fallback)**
+
+If the login form doesn't work for you, create a `credentials.json` file in the project root:
 
 ```json
 {
@@ -138,7 +146,9 @@ Create a `credentials.json` file in the project root:
 
 On Windows, you can create this file by opening Notepad, pasting the JSON content above (with your actual credentials), then clicking File > Save As. In the save dialog, navigate to the `zack-stinks` folder, change "Save as type" to "All Files", and enter `credentials.json` as the filename.
 
-**Note:** Your credentials are transmitted securely over HTTPS to Robinhood's OAuth2 endpoint. The robin_stocks library stores session tokens locally at `~/.tokens/robinhood.pickle` for session persistence.
+Then click "Use credentials.json instead" on the login page.
+
+**Note:** The robin_stocks library stores session tokens locally at `~/.tokens/robinhood.pickle` for session persistence, so you won't need to log in every time.
 
 ### Running the App
 

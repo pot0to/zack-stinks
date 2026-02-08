@@ -6,7 +6,6 @@ import robin_stocks.robinhood as rs
 import plotly.graph_objects as go
 import pandas as pd
 from .base import BaseState
-from ..utils.auth import get_rh_credentials
 from ..utils.cache import get_cached, set_cached, PORTFOLIO_TTL
 
 SHARES_PER_CONTRACT = 100
@@ -346,42 +345,12 @@ class PortfolioState(BaseState):
         return fig
     
     async def setup_portfolio_page(self):
-        yield PortfolioState.login_to_robinhood
-        yield PortfolioState.fetch_all_portfolio_data
-
-    async def login_to_robinhood(self):
-        self.is_loading = True
-        yield 
-        creds = get_rh_credentials()
-        if not creds:
-            yield rx.toast.error("Credentials missing!")
-            self.is_loading = False
+        """Setup portfolio page - check login status and fetch data."""
+        # If not logged in, redirect to login page
+        if not self.is_logged_in:
+            yield rx.redirect("/login")
             return
-
-        try:
-            # login_info maintains the session globally in the 'rs' module
-            # Always call login to refresh/validate session (it's idempotent with store_session)
-            login_info = await asyncio.to_thread(
-                rs.login, 
-                username=creds["username"], 
-                password=creds["password"],
-                mfa_code=self.mfa_input if self.mfa_input else None,
-                store_session=True
-            )
-
-            if login_info and "access_token" in login_info:
-                if not self.is_logged_in:
-                    # Only fetch profile on first login
-                    user_profile = await asyncio.to_thread(rs.account.load_user_profile)
-                    self.account_name = user_profile.get("first_name", "User")
-                self.is_logged_in = True
-                # No toast needed - successful data load is confirmation enough
-            else:
-                yield rx.toast.warning("MFA Required or Login Failed.")
-        except Exception as e:
-            yield rx.toast.error(f"Login Error: {str(e)}")
-        
-        self.is_loading = False
+        yield PortfolioState.fetch_all_portfolio_data
     
     async def _process_single_account(self, name: str, acc_num: str) -> dict:
         """Process a single account's data. Returns dict with all account data."""
