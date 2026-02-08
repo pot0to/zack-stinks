@@ -1,11 +1,18 @@
 import reflex as rx
 from ..state import PortfolioState
 from ..components.sidebar import sidebar
+from ..components.disclaimer import disclaimer_banner
 
 def portfolio_page():
-    return rx.hstack(
-        sidebar(),
-        portfolio()
+    return rx.vstack(
+        disclaimer_banner(),
+        rx.hstack(
+            sidebar(),
+            portfolio(),
+            width="100%",
+        ),
+        spacing="0",
+        width="100%",
     )
 
 def portfolio():

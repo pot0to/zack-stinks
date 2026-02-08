@@ -1,11 +1,18 @@
 import reflex as rx
 from ..components.sidebar import sidebar
+from ..components.disclaimer import disclaimer_banner
 from ..state import MarketState
 
 def market_page():
-    return rx.hstack(
-        sidebar(),
-        market_overview()
+    return rx.vstack(
+        disclaimer_banner(),
+        rx.hstack(
+            sidebar(),
+            market_overview(),
+            width="100%",
+        ),
+        spacing="0",
+        width="100%",
     )
 
 def market_overview():
