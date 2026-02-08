@@ -118,7 +118,7 @@ python -m venv .venv
 pip install -r requirements.txt
 ```
 
-If you forgot to check "Add Python to PATH" during installation, you can either reinstall Python with that option checked, or manually add it by going to Settings > System > About > Advanced system settings > Environment Variables, then adding `C:\Users\<YourUsername>\AppData\Local\Programs\Python\Python311\` and its `Scripts` subfolder to your PATH.
+If you forgot to check "Add Python to PATH" during installation, you can either reinstall Python with that option checked, or manually add it. To find your Python installation path, open Command Prompt and run `where python` (if Python runs at all) or check the default location at `C:\Users\<YourUsername>\AppData\Local\Programs\Python\`. Once you find the folder containing `python.exe`, add both that folder and its `Scripts` subfolder to your PATH via Settings > System > About > Advanced system settings > Environment Variables.
 
 ### Configuration
 
