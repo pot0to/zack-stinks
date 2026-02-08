@@ -18,12 +18,17 @@ class ResearchState(BaseState):
     # Stock statistics
     current_price: str = "--"
     price_change_pct: str = "--"
+    price_change_positive: bool = True  # For color coding
     high_52w: str = "--"
     rsi_14: str = "--"
+    rsi_zone: str = "--"  # Oversold/Weak/Bullish/Overbought
     volatility: str = "--"
+    volatility_zone: str = "--"  # Low/Normal/High relative to stock's own history
+    volatility_vs_spy: str = "--"  # SPY volatility for market benchmark
     ma_50_pct: str = "--"
     ma_200_pct: str = "--"
     macd_signal: str = "--"
+    range_52w: str = "--"  # Position in 52-week range (0-100%)
     
     # Chart figure
     price_chart: go.Figure = go.Figure()
@@ -86,18 +91,84 @@ class ResearchState(BaseState):
             
             self.current_price = f"${current:.2f}"
             self.price_change_pct = f"{change_pct:+.2f}%"
+            self.price_change_positive = bool(change_pct >= 0)
 
-            # 52-week high
+            # 52-week high and low for range calculation
             high_52 = stats_hist['High'].max()
+            low_52 = stats_hist['Low'].min()
             self.high_52w = f"${high_52:.2f}"
+            
+            # 52-week range position: where price sits in the range (0-100%)
+            if high_52 > low_52:
+                range_position = ((current - low_52) / (high_52 - low_52)) * 100
+                self.range_52w = f"{range_position:.0f}%"
+            else:
+                self.range_52w = "N/A"
 
-            # RSI (14-day)
-            self.rsi_14 = f"{self._calculate_rsi(full_hist['Close'], 14):.1f}"
+            # RSI (14-day) with zone classification
+            rsi_value = self._calculate_rsi(full_hist['Close'], 14)
+            self.rsi_14 = f"{rsi_value:.1f}"
+            
+            # RSI zones for buy/sell signal context
+            if rsi_value < 30:
+                self.rsi_zone = "Oversold"  # Potential buy signal
+            elif rsi_value < 50:
+                self.rsi_zone = "Weak"  # Bearish momentum, caution
+            elif rsi_value <= 70:
+                self.rsi_zone = "Bullish"  # Healthy uptrend
+            else:
+                self.rsi_zone = "Overbought"  # Potential sell signal
 
-            # Volatility (annualized standard deviation of returns)
-            returns = stats_hist['Close'].pct_change().dropna()
-            vol = returns.std() * (252 ** 0.5) * 100
-            self.volatility = f"{vol:.1f}%"
+            # Volatility calculation with dual context (industry standard approach):
+            # 1. Current volatility: 30-day HV (standard retail display)
+            # 2. Historical baseline: 52-week rolling average for zone comparison
+            # 3. SPY benchmark: 30-day HV for market comparison
+            
+            # Guard against very new stocks with insufficient history
+            if len(full_hist) < 30:
+                self.volatility = "N/A"
+                self.volatility_zone = "--"
+                self.volatility_vs_spy = "SPY: N/A"
+            else:
+                # Current 30-day historical volatility (HV30) - industry standard
+                recent_returns = full_hist['Close'].tail(30).pct_change().dropna()
+                current_vol = recent_returns.std() * (252 ** 0.5) * 100
+                self.volatility = f"{current_vol:.1f}%"
+                
+                # Calculate stock's 52-week average volatility for baseline comparison
+                if len(full_hist) >= 252:  # Need 1 year of data
+                    hist_1y = full_hist.tail(252)
+                    rolling_vol = hist_1y['Close'].pct_change().rolling(30).std() * (252 ** 0.5) * 100
+                    hist_avg_vol = rolling_vol.dropna().mean()
+                else:
+                    # Fall back to full history average if less than 1 year
+                    all_returns = full_hist['Close'].pct_change().dropna()
+                    hist_avg_vol = all_returns.std() * (252 ** 0.5) * 100
+                
+                # Zone based on stock's own historical behavior
+                vol_ratio = current_vol / hist_avg_vol if hist_avg_vol > 0 else 1.0
+                if vol_ratio < 0.7:
+                    self.volatility_zone = "Low"  # Unusually calm for this stock
+                elif vol_ratio <= 1.3:
+                    self.volatility_zone = "Normal"  # Typical for this stock
+                else:
+                    self.volatility_zone = "High"  # Elevated for this stock
+                
+                # Fetch SPY 30-day volatility for market benchmark comparison
+                spy_cache_key = "stock_history:SPY"
+                spy_hist = get_cached(spy_cache_key)
+                if spy_hist is None:
+                    spy_ticker = yf.Ticker("SPY")
+                    spy_hist = await asyncio.to_thread(spy_ticker.history, period="1y")
+                    if spy_hist is not None and not spy_hist.empty:
+                        set_cached(spy_cache_key, spy_hist, DEFAULT_TTL)
+                
+                if spy_hist is not None and not spy_hist.empty:
+                    spy_returns = spy_hist['Close'].tail(30).pct_change().dropna()
+                    spy_vol = spy_returns.std() * (252 ** 0.5) * 100
+                    self.volatility_vs_spy = f"SPY: {spy_vol:.1f}%"
+                else:
+                    self.volatility_vs_spy = "SPY: N/A"
 
             # 50-day and 200-day moving average comparisons
             ma_50_val, pct_from_50 = calculate_ma_proximity(full_hist['Close'], 50)

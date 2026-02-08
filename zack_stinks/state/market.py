@@ -14,6 +14,7 @@ class MarketState(BaseState):
     ma_proximity_events: list[dict] = []
     below_ma_200_events: list[dict] = []
     near_ath_events: list[dict] = []
+    ma_breakout_events: list[dict] = []
     # Track portfolio spotlight loading state
     portfolio_signals_loading: bool = False
     portfolio_data_available: bool = False
@@ -50,6 +51,14 @@ class MarketState(BaseState):
     @rx.var
     def individual_near_ath_events(self) -> list[dict]:
         return [e for e in self.near_ath_events if not is_index_fund(e.get("symbol", ""))]
+
+    @rx.var
+    def index_fund_ma_breakout_events(self) -> list[dict]:
+        return [e for e in self.ma_breakout_events if is_index_fund(e.get("symbol", ""))]
+    
+    @rx.var
+    def individual_ma_breakout_events(self) -> list[dict]:
+        return [e for e in self.ma_breakout_events if not is_index_fund(e.get("symbol", ""))]
 
     async def setup_market_page(self):
         """Setup market page - validate session and fetch data.
@@ -103,6 +112,7 @@ class MarketState(BaseState):
             self.ma_proximity_events = []
             self.below_ma_200_events = []
             self.near_ath_events = []
+            self.ma_breakout_events = []
             self.portfolio_data_available = False
             self.portfolio_signals_loading = False
             return
@@ -121,6 +131,7 @@ class MarketState(BaseState):
                 self.ma_proximity_events = cached["ma_proximity_events"]
                 self.below_ma_200_events = cached.get("below_ma_200_events", [])
                 self.near_ath_events = cached.get("near_ath_events", [])
+                self.ma_breakout_events = cached.get("ma_breakout_events", [])
                 self.portfolio_signals_loading = False
                 return
             
@@ -134,6 +145,7 @@ class MarketState(BaseState):
             self.ma_proximity_events = results["ma_proximity_events"]
             self.below_ma_200_events = results["below_ma_200_events"]
             self.near_ath_events = results["near_ath_events"]
+            self.ma_breakout_events = results["ma_breakout_events"]
             
             # Cache results
             set_cached(cache_key, results, DEFAULT_TTL)
@@ -142,6 +154,7 @@ class MarketState(BaseState):
             self.ma_proximity_events = []
             self.below_ma_200_events = []
             self.near_ath_events = []
+            self.ma_breakout_events = []
         
         self.portfolio_signals_loading = False
     

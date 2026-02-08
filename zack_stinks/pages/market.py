@@ -105,6 +105,15 @@ def _portfolio_spotlight() -> rx.Component:
             ),
             rx.tabs.trigger(
                 rx.hstack(
+                    rx.icon("trending-up", size=14),
+                    rx.text("Trend Signals"),
+                    spacing="2",
+                    align="center",
+                ),
+                value="breakouts",
+            ),
+            rx.tabs.trigger(
+                rx.hstack(
                     rx.icon("target", size=14),
                     rx.text("Near Key Levels"),
                     spacing="2",
@@ -132,6 +141,7 @@ def _portfolio_spotlight() -> rx.Component:
             ),
         ),
         rx.tabs.content(_gap_events_content(), value="gaps", padding_top="1em"),
+        rx.tabs.content(_breakout_events_content(), value="breakouts", padding_top="1em"),
         rx.tabs.content(_ma_proximity_content(), value="ma_proximity", padding_top="1em"),
         rx.tabs.content(_below_ma_content(), value="below_ma", padding_top="1em"),
         rx.tabs.content(_near_ath_content(), value="near_ath", padding_top="1em"),
@@ -232,6 +242,119 @@ def _gap_events_content() -> rx.Component:
                     rx.table.root(
                         _gap_table_header(),
                         rx.table.body(rx.foreach(MarketState.individual_gap_events, _gap_event_row)),
+                        width="100%",
+                    ),
+                    width="100%",
+                ),
+                rx.fragment(),
+            ),
+            width="100%",
+        ),
+        no_events,
+    )
+
+
+def _breakout_table_header() -> rx.Component:
+    """Header for MA breakout events table."""
+    return rx.table.header(
+        rx.table.row(
+            rx.table.column_header_cell("Ticker"),
+            rx.table.column_header_cell("Direction"),
+            rx.table.column_header_cell("Signal Type"),
+            rx.table.column_header_cell("Price"),
+            rx.table.column_header_cell("MA Value"),
+            rx.table.column_header_cell(
+                rx.tooltip(
+                    rx.hstack(
+                        rx.text("Volume"),
+                        rx.icon("info", size=12, color="gray"),
+                        spacing="1",
+                        align="center",
+                    ),
+                    content="Volume ratio vs 50-day average. Price breakouts require 1.5x (50d) or 2.0x (200d). "
+                            "Golden/Death Cross signals don't require volume confirmation.",
+                )
+            ),
+        ),
+    )
+
+
+def _breakout_event_row(event: dict) -> rx.Component:
+    """Table row for MA breakout event with color-coded direction."""
+    is_bullish = event["direction"] == "Bullish"
+    ma_type = event["ma_type"]
+    
+    # Determine badge for MA type: special styling for Golden/Death Cross
+    ma_badge = rx.match(
+        ma_type,
+        ("Golden Cross", rx.badge("Golden Cross", color_scheme="yellow")),
+        ("Death Cross", rx.badge("Death Cross", color_scheme="crimson")),
+        ("50-day MA", rx.badge("50d", color_scheme="blue")),
+        ("200-day MA", rx.badge("200d", color_scheme="orange")),
+        rx.badge(ma_type, color_scheme="gray"),  # fallback
+    )
+    
+    return rx.table.row(
+        rx.table.cell(rx.text(event["symbol"], weight="bold")),
+        rx.table.cell(
+            rx.badge(
+                event["direction"],
+                color_scheme=rx.cond(is_bullish, "green", "red"),
+            )
+        ),
+        rx.table.cell(ma_badge),
+        rx.table.cell(event["price"]),
+        rx.table.cell(event["ma_value"]),
+        rx.table.cell(rx.text(event["volume_ratio"], " avg")),
+        background_color=rx.cond(is_bullish, "rgba(34, 197, 94, 0.1)", "rgba(239, 68, 68, 0.1)"),
+    )
+
+
+def _breakout_events_content() -> rx.Component:
+    """MA breakout events tab content with bullish and bearish signals."""
+    no_events = rx.text(
+        "No MA breakout events detected. Breakouts occur when price crosses above or below "
+        "a key moving average (50d or 200d) with significant volume.",
+        color="gray",
+        size="2",
+    )
+    
+    return rx.cond(
+        MarketState.ma_breakout_events.length() > 0,
+        rx.vstack(
+            # Index Funds section
+            rx.cond(
+                MarketState.index_fund_ma_breakout_events.length() > 0,
+                rx.vstack(
+                    rx.hstack(
+                        rx.icon("layers", size=14, color="blue"),
+                        rx.text("Index Funds & ETFs", weight="medium", size="2"),
+                        spacing="2",
+                        align_items="center",
+                    ),
+                    rx.table.root(
+                        _breakout_table_header(),
+                        rx.table.body(rx.foreach(MarketState.index_fund_ma_breakout_events, _breakout_event_row)),
+                        width="100%",
+                    ),
+                    width="100%",
+                    margin_bottom="1.5em",
+                ),
+                rx.fragment(),
+            ),
+            # Individual Stocks section
+            rx.cond(
+                MarketState.individual_ma_breakout_events.length() > 0,
+                rx.vstack(
+                    rx.hstack(
+                        rx.icon("building-2", size=14, color="green"),
+                        rx.text("Individual Stocks", weight="medium", size="2"),
+                        spacing="2",
+                        align_items="center",
+                    ),
+                    rx.table.root(
+                        _breakout_table_header(),
+                        rx.table.body(rx.foreach(MarketState.individual_ma_breakout_events, _breakout_event_row)),
                         width="100%",
                     ),
                     width="100%",

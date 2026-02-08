@@ -87,13 +87,61 @@ def _search_controls() -> rx.Component:
     )
 
 
+def _rsi_zone_badge() -> rx.Component:
+    """Dynamic badge for RSI zone with color-coded buy/sell signal context."""
+    return rx.match(
+        ResearchState.rsi_zone,
+        ("Oversold", rx.badge("Oversold", color_scheme="green")),  # Buy signal
+        ("Weak", rx.badge("Weak", color_scheme="orange")),  # Caution
+        ("Bullish", rx.badge("Bullish", color_scheme="blue")),  # Hold
+        ("Overbought", rx.badge("Overbought", color_scheme="red")),  # Sell signal
+        rx.badge(ResearchState.rsi_zone, color_scheme="gray"),  # Fallback
+    )
+
+
+def _volatility_zone_badge() -> rx.Component:
+    """Dynamic badge for volatility zone relative to stock's own history."""
+    return rx.match(
+        ResearchState.volatility_zone,
+        ("Low", rx.badge("Low", color_scheme="blue")),  # Calmer than usual
+        ("Normal", rx.badge("Normal", color_scheme="green")),  # Typical for this stock
+        ("High", rx.badge("High", color_scheme="red")),  # More volatile than usual
+        rx.badge(ResearchState.volatility_zone, color_scheme="gray"),  # Fallback
+    )
+
+
 def _stats_row() -> rx.Component:
     """Row of stat cards for research metrics."""
     return rx.hstack(
-        stat_card("Price", ResearchState.current_price, ResearchState.price_change_pct),
-        stat_card("52W High", ResearchState.high_52w),
-        stat_card("RSI (14)", ResearchState.rsi_14),
-        stat_card("Volatility", ResearchState.volatility),
+        stat_card(
+            "Price",
+            ResearchState.current_price,
+            ResearchState.price_change_pct,
+            sub_color=rx.cond(ResearchState.price_change_positive, "green", "red"),
+        ),
+        stat_card(
+            "52W Range",
+            ResearchState.range_52w,
+            "High: " + ResearchState.high_52w,
+            info_text="Position within 52-week trading range. 0% = at 52-week low, 100% = at 52-week high.",
+        ),
+        stat_card(
+            "RSI (14)",
+            ResearchState.rsi_14,
+            badge=_rsi_zone_badge(),
+            info_text="RSI zones: Oversold (<30) may signal a bounce, Weak (30-50) indicates bearish momentum, "
+                      "Bullish (50-70) suggests healthy uptrend, Overbought (>70) may signal a pullback.",
+        ),
+        stat_card(
+            "Volatility",
+            ResearchState.volatility,
+            sub_value=ResearchState.volatility_vs_spy,
+            badge=_volatility_zone_badge(),
+            info_text="HV30: Annualized standard deviation of daily returns over 30 trading days. "
+                      "Zone compares current HV30 to the stock's own 52-week rolling average: "
+                      "Low (<70% of avg), Normal (70-130%), High (>130%). "
+                      "'Normal' means typical for THIS stock, not the market. SPY shown for market baseline.",
+        ),
         stat_card("vs 50 MA", ResearchState.ma_50_pct),
         stat_card("vs 200 MA", ResearchState.ma_200_pct),
         stat_card("MACD", ResearchState.macd_signal),

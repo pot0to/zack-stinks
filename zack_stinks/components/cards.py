@@ -7,8 +7,9 @@ def stat_card(
     label: str,
     value: rx.Var,
     sub_value: rx.Var = None,
-    sub_color: str = "gray",
+    sub_color = "gray",
     badge: rx.Component = None,
+    info_text: str = None,
 ) -> rx.Component:
     """Unified stat card for displaying metrics.
     
@@ -16,11 +17,32 @@ def stat_card(
         label: Card title/label
         value: Main value to display
         sub_value: Optional secondary value (e.g., percentage change)
-        sub_color: Color for sub_value text
+        sub_color: Color for sub_value text (can be string or rx.cond for dynamic color)
         badge: Optional badge component to display
+        info_text: Optional explanation text shown in popover on info icon click
     """
+    # Build label row with optional info icon
+    if info_text:
+        label_row = rx.hstack(
+            rx.text(label, size="1", color=rx.color("gray", 10)),
+            rx.popover.root(
+                rx.popover.trigger(
+                    rx.icon("info", size=12, color="gray", cursor="pointer"),
+                ),
+                rx.popover.content(
+                    rx.text(info_text, size="2"),
+                    side="top",
+                    max_width="280px",
+                ),
+            ),
+            spacing="1",
+            align="center",
+        )
+    else:
+        label_row = rx.text(label, size="1", color=rx.color("gray", 10))
+    
     children = [
-        rx.text(label, size="1", color=rx.color("gray", 10)),
+        label_row,
         rx.text(value, size="6", weight="bold"),
     ]
     if badge is not None:

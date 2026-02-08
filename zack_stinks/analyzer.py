@@ -85,10 +85,11 @@ class StockAnalyzer:
         """
         Detect all portfolio signals in a single pass using batch data fetching.
         
-        This consolidates gap detection, MA proximity, below-MA-200, and near-52-week-high
-        detection into one method that fetches data once and processes it for all signals.
+        This consolidates gap detection, MA proximity, below-MA-200, near-52-week-high,
+        and MA breakout detection into one method that fetches data once.
         
-        Returns dict with keys: gap_events, ma_proximity_events, below_ma_200_events, near_ath_events
+        Returns dict with keys: gap_events, ma_proximity_events, below_ma_200_events,
+        near_ath_events, ma_breakout_events
         """
         if not symbols:
             return {
@@ -96,6 +97,7 @@ class StockAnalyzer:
                 "ma_proximity_events": [],
                 "below_ma_200_events": [],
                 "near_ath_events": [],
+                "ma_breakout_events": [],
             }
         
         # Batch fetch all historical data (1 year covers all needs including 5-day for gaps)
@@ -109,6 +111,7 @@ class StockAnalyzer:
         ma_proximity_events = []
         below_ma_200_events = []
         near_ath_events = []
+        ma_breakout_events = []
         
         for symbol in symbols:
             df = history_data.get(symbol)
@@ -136,22 +139,29 @@ class StockAnalyzer:
                 if below_event:
                     below_ma_200_events.append(below_event)
             
+            # Process MA breakout events (price crossing above/below MA with volume)
+            ma_breakout_events.extend(
+                self._process_ma_breakout(symbol, df, volume_threshold)
+            )
+            
             # Process near 52-week high events
             near_high_event = self._process_near_high(symbol, info, near_high_threshold, accounts_str)
             if near_high_event:
                 near_ath_events.append(near_high_event)
         
-        # Sort results
+        # Sort results: breakouts sorted with bullish first, then by volume ratio
         gap_events.sort(key=lambda x: x["pct_change_val"], reverse=True)
         ma_proximity_events.sort(key=lambda x: x["abs_offset"])
         below_ma_200_events.sort(key=lambda x: x["pct_below_val"])
         near_ath_events.sort(key=lambda x: x["abs_from_ath"])
+        ma_breakout_events.sort(key=lambda x: (x["direction"] != "Bullish", -x["volume_ratio_val"]))
         
         return {
             "gap_events": gap_events,
             "ma_proximity_events": ma_proximity_events,
             "below_ma_200_events": below_ma_200_events,
             "near_ath_events": near_ath_events,
+            "ma_breakout_events": ma_breakout_events,
         }
     
     def _process_gap_event(self, symbol: str, df, volume_threshold: float) -> dict | None:
@@ -287,6 +297,120 @@ class StockAnalyzer:
             "abs_from_ath": abs(pct_from_high),
             "accounts": accounts_str,
         }
+
+    def _process_ma_breakout(
+        self, symbol: str, df, volume_threshold: float
+    ) -> list[dict]:
+        """
+        Detect MA breakout and crossover events.
+        
+        Price breakouts: price crossing above/below a key MA with volume confirmation.
+        MA crossovers: 50-day MA crossing 200-day MA (Golden Cross / Death Cross).
+        
+        Volume thresholds: 1.5x for 50-day MA, 2.0x for 200-day MA.
+        Golden/Death Cross events don't require volume confirmation (MA crossover is the signal).
+        """
+        events = []
+        
+        # Need 201 days: 200 for today's MA, plus 1 more for yesterday's MA calculation
+        if df is None or len(df) < 201:
+            return events
+        
+        try:
+            prices = df["Close"]
+            volumes = df["Volume"]
+            
+            today_close = float(prices.iloc[-1])
+            yesterday_close = float(prices.iloc[-2])
+            today_volume = float(volumes.iloc[-1])
+            
+            # Calculate MAs for today and yesterday
+            ma_50_today = float(prices.iloc[-50:].mean())
+            ma_50_yesterday = float(prices.iloc[-51:-1].mean())
+            ma_200_today = float(prices.iloc[-200:].mean())
+            ma_200_yesterday = float(prices.iloc[-201:-1].mean())
+            
+            # Calculate average volume (50-day, excluding today)
+            avg_volume = float(volumes.iloc[-51:-1].mean())
+            volume_ratio = today_volume / avg_volume if avg_volume > 0 else 0
+            
+            # Golden Cross: 50-day MA crosses above 200-day MA (major bullish signal)
+            if ma_50_today > ma_200_today and ma_50_yesterday <= ma_200_yesterday:
+                events.append({
+                    "symbol": symbol,
+                    "direction": "Bullish",
+                    "ma_type": "Golden Cross",
+                    "price": f"${today_close:,.2f}",
+                    "ma_value": f"50d: ${ma_50_today:,.2f} > 200d: ${ma_200_today:,.2f}",
+                    "volume_ratio": f"{volume_ratio:.1f}x",
+                    "volume_ratio_val": volume_ratio,
+                })
+            
+            # Death Cross: 50-day MA crosses below 200-day MA (major bearish signal)
+            if ma_50_today < ma_200_today and ma_50_yesterday >= ma_200_yesterday:
+                events.append({
+                    "symbol": symbol,
+                    "direction": "Bearish",
+                    "ma_type": "Death Cross",
+                    "price": f"${today_close:,.2f}",
+                    "ma_value": f"50d: ${ma_50_today:,.2f} < 200d: ${ma_200_today:,.2f}",
+                    "volume_ratio": f"{volume_ratio:.1f}x",
+                    "volume_ratio_val": volume_ratio,
+                })
+            
+            # Check 50-day MA breakout (requires 1.5x volume)
+            if volume_ratio >= volume_threshold:
+                # Bullish: crossed above 50-day MA
+                if today_close > ma_50_today and yesterday_close <= ma_50_yesterday:
+                    events.append({
+                        "symbol": symbol,
+                        "direction": "Bullish",
+                        "ma_type": "50-day MA",
+                        "price": f"${today_close:,.2f}",
+                        "ma_value": f"${ma_50_today:,.2f}",
+                        "volume_ratio": f"{volume_ratio:.1f}x",
+                        "volume_ratio_val": volume_ratio,
+                    })
+                # Bearish: crossed below 50-day MA
+                elif today_close < ma_50_today and yesterday_close >= ma_50_yesterday:
+                    events.append({
+                        "symbol": symbol,
+                        "direction": "Bearish",
+                        "ma_type": "50-day MA",
+                        "price": f"${today_close:,.2f}",
+                        "ma_value": f"${ma_50_today:,.2f}",
+                        "volume_ratio": f"{volume_ratio:.1f}x",
+                        "volume_ratio_val": volume_ratio,
+                    })
+            
+            # Check 200-day MA breakout (requires 2.0x volume for stronger confirmation)
+            if volume_ratio >= 2.0:
+                # Bullish: crossed above 200-day MA
+                if today_close > ma_200_today and yesterday_close <= ma_200_yesterday:
+                    events.append({
+                        "symbol": symbol,
+                        "direction": "Bullish",
+                        "ma_type": "200-day MA",
+                        "price": f"${today_close:,.2f}",
+                        "ma_value": f"${ma_200_today:,.2f}",
+                        "volume_ratio": f"{volume_ratio:.1f}x",
+                        "volume_ratio_val": volume_ratio,
+                    })
+                # Bearish: crossed below 200-day MA
+                elif today_close < ma_200_today and yesterday_close >= ma_200_yesterday:
+                    events.append({
+                        "symbol": symbol,
+                        "direction": "Bearish",
+                        "ma_type": "200-day MA",
+                        "price": f"${today_close:,.2f}",
+                        "ma_value": f"${ma_200_today:,.2f}",
+                        "volume_ratio": f"{volume_ratio:.1f}x",
+                        "volume_ratio_val": volume_ratio,
+                    })
+        except Exception as e:
+            print(f"Error processing MA breakout for {symbol}: {e}")
+        
+        return events
 
     # Legacy methods kept for backward compatibility (used by other parts of the app)
     def detect_gap_events(self, symbols: list[str], volume_threshold: float = 1.5) -> list[dict]:
