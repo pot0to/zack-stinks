@@ -223,11 +223,8 @@ def _below_ma_row(event: dict) -> rx.Component:
     """Table row for below 200-day MA event with privacy masking."""
     def masked(val):
         str_val = val.to(str)
-        return rx.cond(
-            State.hide_portfolio_values,
-            str_val.replace("0", "*").replace("1", "*").replace("2", "*").replace("3", "*").replace("4", "*").replace("5", "*").replace("6", "*").replace("7", "*").replace("8", "*").replace("9", "*"),
-            str_val,
-        )
+        masked_str = str_val.replace("0", "*").replace("1", "*").replace("2", "*").replace("3", "*").replace("4", "*").replace("5", "*").replace("6", "*").replace("7", "*").replace("8", "*").replace("9", "*")
+        return rx.cond(State.hide_portfolio_values, masked_str, str_val)
     
     return rx.table.row(
         rx.table.cell(rx.text(event["symbol"], weight="bold")),
@@ -250,11 +247,8 @@ def _gap_event_row(event: dict) -> rx.Component:
     """Table row for gap event with privacy masking."""
     def masked(val):
         str_val = val.to(str)
-        return rx.cond(
-            State.hide_portfolio_values,
-            str_val.replace("0", "*").replace("1", "*").replace("2", "*").replace("3", "*").replace("4", "*").replace("5", "*").replace("6", "*").replace("7", "*").replace("8", "*").replace("9", "*"),
-            str_val,
-        )
+        masked_str = str_val.replace("0", "*").replace("1", "*").replace("2", "*").replace("3", "*").replace("4", "*").replace("5", "*").replace("6", "*").replace("7", "*").replace("8", "*").replace("9", "*")
+        return rx.cond(State.hide_portfolio_values, masked_str, str_val)
     
     return rx.table.row(
         rx.table.cell(
@@ -284,11 +278,8 @@ def _ma_proximity_row(event: dict) -> rx.Component:
     """Table row for MA proximity event with privacy masking."""
     def masked(val):
         str_val = val.to(str)
-        return rx.cond(
-            State.hide_portfolio_values,
-            str_val.replace("0", "*").replace("1", "*").replace("2", "*").replace("3", "*").replace("4", "*").replace("5", "*").replace("6", "*").replace("7", "*").replace("8", "*").replace("9", "*"),
-            str_val,
-        )
+        masked_str = str_val.replace("0", "*").replace("1", "*").replace("2", "*").replace("3", "*").replace("4", "*").replace("5", "*").replace("6", "*").replace("7", "*").replace("8", "*").replace("9", "*")
+        return rx.cond(State.hide_portfolio_values, masked_str, str_val)
     
     return rx.table.row(
         rx.table.cell(
