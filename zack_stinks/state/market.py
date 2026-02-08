@@ -11,8 +11,9 @@ class MarketState(BaseState):
     trend_fig: go.Figure = go.Figure()
     gap_events: list[dict] = []
     ma_proximity_events: list[dict] = []
-    # Store portfolio symbols for analysis
-    _portfolio_symbols: list[str] = []
+    # Track portfolio spotlight loading state
+    portfolio_signals_loading: bool = False
+    portfolio_data_available: bool = False
 
     async def setup_market_page(self):
         """Setup market page - check login status and fetch data."""
@@ -50,13 +51,20 @@ class MarketState(BaseState):
         """
         from .portfolio import PortfolioState
         
+        self.portfolio_signals_loading = True
+        yield
+        
         portfolio_state = await self.get_state(PortfolioState)
         
         # If portfolio not loaded, skip signals (don't block market page)
         if not portfolio_state.all_stock_holdings:
             self.gap_events = []
             self.ma_proximity_events = []
+            self.portfolio_data_available = False
+            self.portfolio_signals_loading = False
             return
+        
+        self.portfolio_data_available = True
         
         # Collect unique symbols from portfolio
         symbols = set()
@@ -80,6 +88,7 @@ class MarketState(BaseState):
             if cached:
                 self.gap_events = cached["gap_events"]
                 self.ma_proximity_events = cached["ma_proximity_events"]
+                self.portfolio_signals_loading = False
                 return
             
             # Fetch signals in parallel
@@ -97,6 +106,8 @@ class MarketState(BaseState):
         else:
             self.gap_events = []
             self.ma_proximity_events = []
+        
+        self.portfolio_signals_loading = False
 
     async def fetch_trend_data(self):
         """Fetches historical data and builds the normalized comparison chart.

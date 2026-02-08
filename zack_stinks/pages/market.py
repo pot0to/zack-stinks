@@ -36,44 +36,92 @@ def _market_content() -> rx.Component:
 
 def _portfolio_spotlight() -> rx.Component:
     """Portfolio spotlight section with gap events and MA proximity."""
+    # Loading state
+    loading_view = rx.center(
+        rx.hstack(
+            rx.spinner(size="2"),
+            rx.text("Analyzing portfolio signals...", color="gray", size="2"),
+            spacing="2",
+        ),
+        padding="2em",
+        width="100%",
+    )
+    
+    # No portfolio data state
+    no_data_view = rx.center(
+        rx.vstack(
+            rx.icon("briefcase", size=24, color="gray"),
+            rx.text("Portfolio data not loaded", weight="medium", color="gray"),
+            rx.text(
+                "Visit the Portfolio page first to load your holdings, then return here.",
+                size="2",
+                color="gray",
+                text_align="center",
+            ),
+            rx.link(
+                rx.button("Go to Portfolio", variant="outline", size="2"),
+                href="/portfolio",
+            ),
+            spacing="2",
+            align="center",
+        ),
+        padding="2em",
+        width="100%",
+    )
+    
+    # Data loaded view
+    data_view = rx.vstack(
+        rx.text("Price Gaps", weight="medium", size="3", color="gray"),
+        rx.cond(
+            MarketState.gap_events.length() > 0,
+            rx.table.root(
+                rx.table.header(
+                    rx.table.row(
+                        rx.table.column_header_cell("Ticker"),
+                        rx.table.column_header_cell("Type"),
+                        rx.table.column_header_cell("% Change"),
+                        rx.table.column_header_cell("Volume"),
+                    ),
+                ),
+                rx.table.body(rx.foreach(MarketState.gap_events, _gap_event_row)),
+                width="100%",
+            ),
+            rx.text("No gap events detected in portfolio holdings.", color="gray", size="2"),
+        ),
+        rx.divider(margin_y="1em"),
+        rx.text("Near Key Levels", weight="medium", size="3", color="gray"),
+        rx.cond(
+            MarketState.ma_proximity_events.length() > 0,
+            rx.table.root(
+                rx.table.header(
+                    rx.table.row(
+                        rx.table.column_header_cell("Ticker"),
+                        rx.table.column_header_cell("Price"),
+                        rx.table.column_header_cell("MA Value"),
+                        rx.table.column_header_cell("Offset"),
+                    ),
+                ),
+                rx.table.body(rx.foreach(MarketState.ma_proximity_events, _ma_proximity_row)),
+                width="100%",
+            ),
+            rx.text("No positions near key moving averages.", color="gray", size="2"),
+        ),
+        align_items="start",
+        width="100%",
+    )
+    
     return rx.card(
         rx.vstack(
             rx.text("Portfolio Spotlight", weight="bold", size="4"),
             rx.divider(margin_y="1em"),
-            rx.text("Price Gaps", weight="medium", size="3", color="gray"),
             rx.cond(
-                MarketState.gap_events.length() > 0,
-                rx.table.root(
-                    rx.table.header(
-                        rx.table.row(
-                            rx.table.column_header_cell("Ticker"),
-                            rx.table.column_header_cell("Type"),
-                            rx.table.column_header_cell("% Change"),
-                            rx.table.column_header_cell("Volume"),
-                        ),
-                    ),
-                    rx.table.body(rx.foreach(MarketState.gap_events, _gap_event_row)),
-                    width="100%",
+                MarketState.portfolio_signals_loading,
+                loading_view,
+                rx.cond(
+                    MarketState.portfolio_data_available,
+                    data_view,
+                    no_data_view,
                 ),
-                rx.text("No gap events detected in portfolio holdings.", color="gray", size="2"),
-            ),
-            rx.divider(margin_y="1em"),
-            rx.text("Near Key Levels", weight="medium", size="3", color="gray"),
-            rx.cond(
-                MarketState.ma_proximity_events.length() > 0,
-                rx.table.root(
-                    rx.table.header(
-                        rx.table.row(
-                            rx.table.column_header_cell("Ticker"),
-                            rx.table.column_header_cell("Price"),
-                            rx.table.column_header_cell("MA Value"),
-                            rx.table.column_header_cell("Offset"),
-                        ),
-                    ),
-                    rx.table.body(rx.foreach(MarketState.ma_proximity_events, _ma_proximity_row)),
-                    width="100%",
-                ),
-                rx.text("No positions near key moving averages.", color="gray", size="2"),
             ),
             align_items="start",
             width="100%",
