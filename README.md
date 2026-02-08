@@ -148,6 +148,34 @@ reflex run
 
 The app will be available at `http://localhost:3000`.
 
+### Updating the Project
+
+To pull the latest changes when the project is updated:
+
+```bash
+# Navigate to the project directory
+cd zack-stinks
+
+# Activate virtual environment
+# macOS/Linux:
+source .venv/bin/activate
+# Windows (Git Bash):
+source .venv/Scripts/activate
+# Windows (PowerShell):
+.\.venv\Scripts\Activate.ps1
+# Windows (cmd):
+.venv\Scripts\activate
+
+# Pull latest changes
+git pull
+
+# Install any new dependencies
+pip install -r requirements.txt
+
+# Restart the app
+reflex run
+```
+
 ## Dependencies
 
 - **reflex** - Web framework
