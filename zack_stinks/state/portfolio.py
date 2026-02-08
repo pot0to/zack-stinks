@@ -552,15 +552,12 @@ class PortfolioState(BaseState):
             res = await asyncio.to_thread(rs.request_get, url, "regular")
             
             if res is None:
-                # Session expired - reset login state and redirect
+                # Session expired - reset login state, UI will show login placeholder
                 async with self:
                     self.is_logged_in = False
                     self.account_name = "User"
                     self.is_loading = False
-                return [
-                    rx.toast.error("Session expired. Please log in again."),
-                    rx.redirect("/login")
-                ]
+                return rx.toast.info("Session expired. Please sign in to view portfolio.")
             
             temp_map = {}
             for acc in res.get('results', []):
@@ -630,10 +627,7 @@ class PortfolioState(BaseState):
                     self.is_logged_in = False
                     self.account_name = "User"
                     self.is_loading = False
-                return [
-                    rx.toast.error("Session expired. Please log in again."),
-                    rx.redirect("/login")
-                ]
+                return rx.toast.info("Session expired. Please sign in to view portfolio.")
             return rx.toast.error(f"Sync failed: {error_str}")
         finally:
             async with self:

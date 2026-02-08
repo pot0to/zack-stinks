@@ -197,6 +197,11 @@ class MarketState(BaseState):
         fig.update_layout(
             template="plotly_dark",
             hovermode="x unified",
+            hoverlabel=dict(
+                bgcolor="rgba(30, 30, 30, 0.95)",
+                font_color="white",
+                bordercolor="rgba(255, 255, 255, 0.2)",
+            ),
             paper_bgcolor="rgba(0,0,0,0)",
             plot_bgcolor="rgba(0,0,0,0)",
             height=400,

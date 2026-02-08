@@ -39,11 +39,9 @@ class BaseState(rx.State):
         """Check if an existing robin_stocks pickle session is still valid.
         
         Called on page load to restore login state from the pickle file
-        without requiring the user to re-enter credentials.
+        without requiring the user to re-enter credentials. Always validates
+        against the actual API rather than trusting in-memory state.
         """
-        if self.is_logged_in:
-            return True
-        
         try:
             user_profile = await asyncio.to_thread(rs.account.load_user_profile)
             if user_profile and user_profile.get("first_name"):
@@ -53,6 +51,9 @@ class BaseState(rx.State):
         except Exception:
             pass
         
+        # Session invalid or expired
+        self.is_logged_in = False
+        self.account_name = "User"
         return False
 
     async def _perform_login(self, username: str, password: str):
@@ -139,4 +140,4 @@ class BaseState(rx.State):
         self.login_password = ""
         self.mfa_input = ""
         self.show_mfa_input = False
-        yield rx.redirect("/login")
+        yield rx.redirect("/")
