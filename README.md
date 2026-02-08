@@ -136,6 +136,8 @@ Create a `credentials.json` file in the project root:
 }
 ```
 
+On Windows, you can create this file by opening Notepad, pasting the JSON content above (with your actual credentials), then clicking File > Save As. In the save dialog, navigate to the `zack-stinks` folder, change "Save as type" to "All Files", and enter `credentials.json` as the filename.
+
 **Note:** Your credentials are transmitted securely over HTTPS to Robinhood's OAuth2 endpoint. The robin_stocks library stores session tokens locally at `~/.tokens/robinhood.pickle` for session persistence.
 
 ### Running the App
