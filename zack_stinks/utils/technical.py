@@ -330,7 +330,8 @@ def get_earnings_date(symbol: str) -> dict:
             earnings_dates = ticker.earnings_dates
             if earnings_dates is not None and not earnings_dates.empty:
                 # Find the next upcoming earnings date
-                now = pd.Timestamp.now()
+                # Use timezone-aware timestamp to match earnings_dates index
+                now = pd.Timestamp.now(tz='America/New_York')
                 future_dates = earnings_dates[earnings_dates.index >= now]
                 if not future_dates.empty:
                     next_earnings = future_dates.index[0]
@@ -339,7 +340,7 @@ def get_earnings_date(symbol: str) -> dict:
                     result["earnings_date_str"] = next_earnings.strftime("%b %d, %Y")
                     
                     today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
-                    earnings_dt = next_earnings.replace(hour=0, minute=0, second=0, microsecond=0)
+                    earnings_dt = next_earnings.replace(tzinfo=None, hour=0, minute=0, second=0, microsecond=0)
                     result["days_until"] = (earnings_dt - today).days
                     
                     # Check time of day for BMO/AMC
