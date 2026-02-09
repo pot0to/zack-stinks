@@ -7,6 +7,7 @@ import pandas as pd
 import yfinance as yf
 from .base import BaseState
 from ..utils.cache import get_cached, set_cached, PORTFOLIO_TTL, MARKET_DATA_TTL
+from ..utils.technical import batch_fetch_earnings
 from ..styles.constants import PL_GREEN_BASE, PL_GREEN_DEEP, PL_RED_BASE, PL_RED_DEEP, PL_NEUTRAL
 
 SHARES_PER_CONTRACT = 100
@@ -21,6 +22,8 @@ INDEX_FUND_SYMBOLS = frozenset({
     "VTI", "ITOT", "SPTM",
     # Nasdaq / tech-heavy
     "QQQ", "QQQM", "VGT", "XLK",
+    # Growth / Value
+    "VUG", "VTV", "IWF", "IWD",
     # Small cap
     "IWM", "VB", "SCHA",
     # Mid cap
@@ -47,6 +50,10 @@ INDEX_FUND_SYMBOLS = frozenset({
     "BND", "AGG", "TLT", "IEF", "SHY",
     # Thematic / ARK
     "ARKK", "ARKW", "ARKF", "ARKG", "ARKQ",
+    # Thematic / Other
+    "FINX",  # Global FinTech
+    "SPMO",  # S&P 500 Momentum
+    "SHLD",  # Global X Defense Tech
     # Leveraged (common ones)
     "TQQQ", "SQQQ", "SPXL", "SPXS", "UPRO",
 })
@@ -118,6 +125,9 @@ class PortfolioState(BaseState):
     # 52-week range data: maps symbol -> range_pct (0-100)
     range_52w_data: dict[str, float] = {}
     
+    # Earnings data: maps symbol -> {days_until, earnings_date_str, timing}
+    earnings_data: dict[str, dict] = {}
+    
     # S&P 500 benchmark data for comparison
     sp500_daily_change_pct: float = 0.0
 
@@ -184,6 +194,25 @@ class PortfolioState(BaseState):
             symbol = item.get("symbol", "???")
             range_52w = self.range_52w_data.get(symbol)
             
+            # Earnings data for badge display (only show if within 7 days)
+            earnings_info = self.earnings_data.get(symbol, {})
+            days_until_earnings = earnings_info.get("days_until")
+            has_upcoming_earnings = days_until_earnings is not None and 0 <= days_until_earnings <= 7
+            
+            # Earnings badge urgency: imminent (0-3 days) or soon (4-7 days)
+            earnings_urgency = None
+            if has_upcoming_earnings:
+                earnings_urgency = "imminent" if days_until_earnings <= 3 else "soon"
+            
+            # Build earnings tooltip text
+            earnings_tooltip = ""
+            if has_upcoming_earnings:
+                date_str = earnings_info.get("earnings_date_str", "")
+                timing = earnings_info.get("timing", "")
+                timing_str = f" ({timing})" if timing else ""
+                days_str = f"in {days_until_earnings} day{'s' if days_until_earnings != 1 else ''}"
+                earnings_tooltip = f"Earnings {date_str}{timing_str} - {days_str}"
+            
             formatted.append({
                 "symbol": symbol,
                 "price_raw": price,
@@ -206,6 +235,10 @@ class PortfolioState(BaseState):
                 "raw_equity": val,
                 "range_52w_raw": range_52w,
                 "range_52w": f"{range_52w:.0f}%" if range_52w is not None else "N/A",
+                # Earnings badge data
+                "has_upcoming_earnings": has_upcoming_earnings,
+                "earnings_urgency": earnings_urgency,
+                "earnings_tooltip": earnings_tooltip,
             })
         
         # Dynamic sorting based on state
@@ -890,33 +923,38 @@ class PortfolioState(BaseState):
             print(f"Error fetching S&P 500 data: {e}")
             return 0.0
 
-    async def _fetch_sector_and_range_data(self, all_stocks: dict) -> tuple[dict, dict]:
-        """Fetch sector and 52-week range data for all stock holdings.
+    async def _fetch_sector_and_range_data(self, all_stocks: dict) -> tuple[dict, dict, dict]:
+        """Fetch sector, 52-week range, and earnings data for all stock holdings.
         
-        Returns (sector_data, range_52w_data) where:
+        Returns (sector_data, range_52w_data, earnings_data) where:
         - sector_data: {account_num: {sector: total_value}}
         - range_52w_data: {symbol: range_pct}
+        - earnings_data: {symbol: {days_until, earnings_date_str, timing}}
         
-        Only fetches data for individual stocks (excludes index funds/ETFs).
+        Only fetches sector/range data for individual stocks (excludes index funds/ETFs).
+        Earnings data is fetched for all stocks since individual stocks have earnings.
         """
-        # Collect unique symbols across all accounts (individual stocks only)
+        # Collect unique symbols across all accounts (individual stocks only for sector/range)
         all_symbols = set()
+        individual_symbols = set()
         for acc_stocks in all_stocks.values():
             for stock in acc_stocks:
                 symbol = stock.get("symbol", "")
-                if symbol and not is_index_fund(symbol):
+                if symbol:
                     all_symbols.add(symbol)
+                    if not is_index_fund(symbol):
+                        individual_symbols.add(symbol)
         
         if not all_symbols:
-            return {}, {}
+            return {}, {}, {}
         
         # Check cache
-        cache_key = f"sector_range_data:{','.join(sorted(all_symbols))}"
+        cache_key = f"sector_range_earnings_data:{','.join(sorted(all_symbols))}"
         cached = get_cached(cache_key)
         if cached:
-            return cached["sector_data"], cached["range_data"]
+            return cached["sector_data"], cached["range_data"], cached.get("earnings_data", {})
         
-        # Fetch ticker info for all symbols in parallel
+        # Fetch ticker info for individual symbols in parallel (for sector/range)
         symbol_info = {}
         
         async def fetch_info(symbol: str):
@@ -928,7 +966,7 @@ class PortfolioState(BaseState):
                 print(f"Error fetching info for {symbol}: {e}")
                 return symbol, {}
         
-        tasks = [fetch_info(s) for s in all_symbols]
+        tasks = [fetch_info(s) for s in individual_symbols]
         results = await asyncio.gather(*tasks)
         
         for symbol, info in results:
@@ -964,10 +1002,21 @@ class PortfolioState(BaseState):
             
             sector_data[acc_num] = acc_sectors
         
-        # Cache results
-        set_cached(cache_key, {"sector_data": sector_data, "range_data": range_52w_data}, MARKET_DATA_TTL)
+        # Fetch earnings data for individual stocks (not index funds)
+        earnings_data = {}
+        if individual_symbols:
+            earnings_data = await asyncio.to_thread(
+                batch_fetch_earnings, list(individual_symbols)
+            )
         
-        return sector_data, range_52w_data
+        # Cache results
+        set_cached(cache_key, {
+            "sector_data": sector_data, 
+            "range_data": range_52w_data,
+            "earnings_data": earnings_data,
+        }, MARKET_DATA_TTL)
+        
+        return sector_data, range_52w_data, earnings_data
 
     @rx.event(background=True)
     async def fetch_all_portfolio_data(self):
@@ -986,6 +1035,7 @@ class PortfolioState(BaseState):
                     self.sp500_daily_change_pct = cached_data.get("sp500_daily_pct", 0.0)
                     self.sector_data = cached_data.get("sector_data", {})
                     self.range_52w_data = cached_data.get("range_52w_data", {})
+                    self.earnings_data = cached_data.get("earnings_data", {})
                     if not self.selected_account and self.account_names:
                         self.selected_account = self.account_names[0]
                     if self.selected_account:
@@ -1058,7 +1108,7 @@ class PortfolioState(BaseState):
                 }
 
             # Fetch sector and 52-week range data for individual stocks
-            sector_data, range_52w_data = await self._fetch_sector_and_range_data(all_stocks)
+            sector_data, range_52w_data, earnings_data = await self._fetch_sector_and_range_data(all_stocks)
 
             # Update state once with all data
             async with self:
@@ -1068,6 +1118,7 @@ class PortfolioState(BaseState):
                 self.sp500_daily_change_pct = sp500_pct
                 self.sector_data = sector_data
                 self.range_52w_data = range_52w_data
+                self.earnings_data = earnings_data
                 
                 if self.selected_account:
                     acc_num = self.account_map.get(self.selected_account)
@@ -1086,6 +1137,7 @@ class PortfolioState(BaseState):
                 "sp500_daily_pct": sp500_pct,
                 "sector_data": sector_data,
                 "range_52w_data": range_52w_data,
+                "earnings_data": earnings_data,
             }, PORTFOLIO_TTL)
 
             return rx.toast.success("Portfolio Updated")

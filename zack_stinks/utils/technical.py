@@ -1,8 +1,9 @@
 """Shared technical analysis utilities."""
 import pandas as pd
 import yfinance as yf
+from datetime import datetime, date
 from typing import Optional
-from .cache import get_cached, set_cached, MARKET_DATA_TTL
+from .cache import get_cached, set_cached, MARKET_DATA_TTL, DEFAULT_TTL
 
 
 def normalize_symbol_for_yfinance(symbol: str) -> str:
@@ -209,5 +210,167 @@ def calculate_ma_data_from_df(df: pd.DataFrame) -> dict:
     ma_200, pct_200 = calculate_ma_proximity(prices, 200)
     result["ma_200"] = ma_200
     result["pct_from_200"] = pct_200
+    
+    return result
+
+
+# Earnings date TTL: 6 hours since earnings dates don't change frequently
+EARNINGS_TTL = 21600
+
+
+def _is_warrant_or_unit(symbol: str) -> bool:
+    """Check if symbol appears to be a warrant, unit, or rights offering.
+    
+    These securities don't have earnings dates. We detect them by:
+    - Explicit warrant suffixes: .WS, -WS, /WS
+    - Known warrant patterns from user's portfolio (OPENW, OPENZ, OPENL)
+    
+    We intentionally avoid single-letter suffix heuristics as they cause
+    false positives on normal tickers (AAPL, GOOGL, UBER, etc.).
+    """
+    upper = symbol.upper()
+    
+    # Check for explicit warrant suffixes
+    if upper.endswith('.WS') or upper.endswith('-WS') or upper.endswith('/WS'):
+        return True
+    
+    # Known warrant patterns from user's portfolio
+    # These are SPAC-related warrants where base ticker + suffix
+    known_warrant_bases = {'OPEN'}  # Opendoor warrants: OPENW, OPENZ, OPENL
+    
+    if len(symbol) >= 5:
+        base = symbol[:-1].upper()
+        suffix = symbol[-1].upper()
+        if base in known_warrant_bases and suffix in ('W', 'Z', 'L', 'U', 'R'):
+            return True
+    
+    return False
+
+
+def get_earnings_date(symbol: str) -> dict:
+    """
+    Fetch next earnings date for a symbol from yfinance.
+    
+    Returns dict with:
+        - earnings_date: datetime or None
+        - earnings_date_str: formatted string (e.g., "Feb 15, 2026") or None
+        - days_until: int or None (negative if earnings already passed)
+        - timing: "BMO", "AMC", or None (before market open / after market close)
+    
+    Results are cached for 6 hours since earnings dates rarely change.
+    ETFs, index funds, warrants, and units are skipped since they don't have earnings.
+    """
+    cache_key = f"earnings:{symbol}"
+    cached = get_cached(cache_key)
+    if cached is not None:
+        return cached
+    
+    result = {
+        "earnings_date": None,
+        "earnings_date_str": None,
+        "days_until": None,
+        "timing": None,
+    }
+    
+    # Skip known ETFs/index funds - they don't have earnings dates
+    # Import here to avoid circular dependency
+    from ..state.portfolio import is_index_fund
+    if is_index_fund(symbol):
+        set_cached(cache_key, result, EARNINGS_TTL)
+        return result
+    
+    # Skip warrants, units, and rights - they don't have earnings dates
+    if _is_warrant_or_unit(symbol):
+        set_cached(cache_key, result, EARNINGS_TTL)
+        return result
+    
+    try:
+        yf_symbol = normalize_symbol_for_yfinance(symbol)
+        ticker = yf.Ticker(yf_symbol)
+        
+        # yfinance provides earnings dates via the calendar property
+        # Note: yfinance 0.2.x+ returns a dict, older versions return DataFrame
+        calendar = ticker.calendar
+        earnings_date = None
+        
+        if calendar is not None:
+            if isinstance(calendar, dict):
+                # New yfinance format: calendar is a dict with 'Earnings Date' as a list
+                earnings_list = calendar.get('Earnings Date')
+                if earnings_list and len(earnings_list) > 0:
+                    # Take the first date from the list
+                    earnings_date = pd.to_datetime(earnings_list[0])
+            elif isinstance(calendar, pd.DataFrame) and not calendar.empty:
+                # Legacy DataFrame format (for backwards compatibility)
+                if 'Earnings Date' in calendar.index:
+                    val = calendar.loc['Earnings Date'].iloc[0]
+                    if pd.notna(val):
+                        earnings_date = pd.to_datetime(val)
+                elif len(calendar.columns) > 0:
+                    first_col = calendar.iloc[:, 0]
+                    if len(first_col) > 0 and pd.notna(first_col.iloc[0]):
+                        try:
+                            earnings_date = pd.to_datetime(first_col.iloc[0])
+                        except Exception:
+                            pass
+        
+        if earnings_date is not None:
+            result["earnings_date"] = earnings_date.to_pydatetime()
+            result["earnings_date_str"] = earnings_date.strftime("%b %d, %Y")
+            
+            # Calculate days until earnings
+            today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+            earnings_dt = earnings_date.replace(hour=0, minute=0, second=0, microsecond=0)
+            delta = (earnings_dt - today).days
+            result["days_until"] = delta
+        
+        # Try to get timing (BMO/AMC) from earnings_dates if available
+        # Note: This requires lxml to be installed
+        try:
+            earnings_dates = ticker.earnings_dates
+            if earnings_dates is not None and not earnings_dates.empty:
+                # Find the next upcoming earnings date
+                now = pd.Timestamp.now()
+                future_dates = earnings_dates[earnings_dates.index >= now]
+                if not future_dates.empty:
+                    next_earnings = future_dates.index[0]
+                    # Update with more accurate date if available
+                    result["earnings_date"] = next_earnings.to_pydatetime()
+                    result["earnings_date_str"] = next_earnings.strftime("%b %d, %Y")
+                    
+                    today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+                    earnings_dt = next_earnings.replace(hour=0, minute=0, second=0, microsecond=0)
+                    result["days_until"] = (earnings_dt - today).days
+                    
+                    # Check time of day for BMO/AMC
+                    hour = next_earnings.hour
+                    if hour < 12:
+                        result["timing"] = "BMO"
+                    elif hour >= 16:
+                        result["timing"] = "AMC"
+        except ImportError:
+            pass  # lxml not installed, skip BMO/AMC detection
+        except Exception:
+            pass  # earnings_dates not available for all tickers
+                
+    except Exception:
+        pass  # Silently handle errors - ETFs and some tickers don't have earnings
+    
+    set_cached(cache_key, result, EARNINGS_TTL)
+    return result
+
+
+def batch_fetch_earnings(symbols: list[str]) -> dict[str, dict]:
+    """
+    Fetch earnings dates for multiple symbols.
+    Returns dict mapping symbol -> earnings data dict.
+    
+    Note: yfinance doesn't support true batch earnings fetching,
+    but results are cached to avoid redundant calls.
+    """
+    result = {}
+    
+    for symbol in symbols:
+        result[symbol] = get_earnings_date(symbol)
     
     return result

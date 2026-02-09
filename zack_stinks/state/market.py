@@ -6,6 +6,7 @@ import plotly.graph_objects as go
 import yfinance as yf
 from ..analyzer import StockAnalyzer
 from ..utils.cache import get_cached, set_cached, MARKET_DATA_TTL, DEFAULT_TTL
+from ..utils.technical import batch_fetch_earnings
 
 class MarketState(BaseState):
     market_data: dict[str, dict[str, str]] = {}
@@ -15,6 +16,7 @@ class MarketState(BaseState):
     below_ma_200_events: list[dict] = []
     near_ath_events: list[dict] = []
     ma_breakout_events: list[dict] = []
+    upcoming_earnings_events: list[dict] = []  # Holdings with earnings within 7 days
     # Track portfolio spotlight loading state
     portfolio_signals_loading: bool = False
     portfolio_data_available: bool = False
@@ -64,7 +66,7 @@ class MarketState(BaseState):
         """Setup market page - validate session and fetch data.
         
         Market data is public and always fetched. Portfolio signals
-        require authentication and are skipped if not logged in.
+        require authentication and auto-load portfolio data if needed.
         """
         # Try to restore session from pickle if available
         await self.validate_existing_session()
@@ -96,8 +98,9 @@ class MarketState(BaseState):
     async def fetch_portfolio_signals_async(self):
         """Fetch gap events and MA proximity for portfolio holdings.
         
-        This is now non-blocking: if portfolio isn't loaded, we skip rather than
-        triggering a full portfolio sync. The user can refresh after visiting portfolio.
+        Auto-loads portfolio data from cache if not already in memory,
+        allowing the Market page to show Portfolio Spotlight without
+        requiring a visit to the Portfolio page first.
         """
         from .portfolio import PortfolioState
         
@@ -106,16 +109,31 @@ class MarketState(BaseState):
         
         portfolio_state = await self.get_state(PortfolioState)
         
-        # If portfolio not loaded, skip signals (don't block market page)
+        # Auto-load portfolio data from cache if not in memory
         if not portfolio_state.all_stock_holdings:
-            self.gap_events = []
-            self.ma_proximity_events = []
-            self.below_ma_200_events = []
-            self.near_ath_events = []
-            self.ma_breakout_events = []
-            self.portfolio_data_available = False
-            self.portfolio_signals_loading = False
-            return
+            cached_portfolio = get_cached("portfolio_data")
+            if cached_portfolio:
+                # Apply cached data directly to portfolio state
+                async with portfolio_state:
+                    portfolio_state.account_map = cached_portfolio["account_map"]
+                    portfolio_state.all_stock_holdings = cached_portfolio["all_stock_holdings"]
+                    portfolio_state.all_options_holdings = cached_portfolio["all_options_holdings"]
+                    portfolio_state.metric_data = cached_portfolio["metric_data"]
+                    portfolio_state.sp500_daily_change_pct = cached_portfolio.get("sp500_daily_pct", 0.0)
+                    portfolio_state.sector_data = cached_portfolio.get("sector_data", {})
+                    portfolio_state.range_52w_data = cached_portfolio.get("range_52w_data", {})
+                    portfolio_state.earnings_data = cached_portfolio.get("earnings_data", {})
+            else:
+                # No cached data available - user needs to visit Portfolio page
+                self.gap_events = []
+                self.ma_proximity_events = []
+                self.below_ma_200_events = []
+                self.near_ath_events = []
+                self.ma_breakout_events = []
+                self.upcoming_earnings_events = []
+                self.portfolio_data_available = False
+                self.portfolio_signals_loading = False
+                return
         
         self.portfolio_data_available = True
         
@@ -132,6 +150,7 @@ class MarketState(BaseState):
                 self.below_ma_200_events = cached.get("below_ma_200_events", [])
                 self.near_ath_events = cached.get("near_ath_events", [])
                 self.ma_breakout_events = cached.get("ma_breakout_events", [])
+                self.upcoming_earnings_events = cached.get("upcoming_earnings_events", [])
                 self.portfolio_signals_loading = False
                 return
             
@@ -141,13 +160,19 @@ class MarketState(BaseState):
                 analyzer.detect_all_signals, symbol_list, symbol_accounts
             )
             
+            # Fetch earnings data for all symbols
+            earnings_data = await asyncio.to_thread(batch_fetch_earnings, symbol_list)
+            upcoming_earnings = self._process_earnings_events(earnings_data, symbol_accounts)
+            
             self.gap_events = results["gap_events"]
             self.ma_proximity_events = results["ma_proximity_events"]
             self.below_ma_200_events = results["below_ma_200_events"]
             self.near_ath_events = results["near_ath_events"]
             self.ma_breakout_events = results["ma_breakout_events"]
+            self.upcoming_earnings_events = upcoming_earnings
             
-            # Cache results
+            # Cache results (include earnings)
+            results["upcoming_earnings_events"] = upcoming_earnings
             set_cached(cache_key, results, DEFAULT_TTL)
         else:
             self.gap_events = []
@@ -155,8 +180,49 @@ class MarketState(BaseState):
             self.below_ma_200_events = []
             self.near_ath_events = []
             self.ma_breakout_events = []
+            self.upcoming_earnings_events = []
         
         self.portfolio_signals_loading = False
+    
+    def _process_earnings_events(
+        self, 
+        earnings_data: dict[str, dict], 
+        symbol_accounts: dict[str, list[str]]
+    ) -> list[dict]:
+        """Process earnings data into events for holdings with earnings within 7 days.
+        
+        Returns list of dicts sorted by days_until (soonest first).
+        """
+        events = []
+        
+        for symbol, data in earnings_data.items():
+            days_until = data.get("days_until")
+            
+            # Only include if earnings within 7 days (and not in the past)
+            if days_until is not None and 0 <= days_until <= 7:
+                accounts = symbol_accounts.get(symbol, [])
+                accounts_str = ", ".join(accounts) if accounts else "Unknown"
+                
+                # Determine urgency level for color coding
+                if days_until <= 3:
+                    urgency = "imminent"  # Red badge
+                else:
+                    urgency = "soon"  # Yellow badge
+                
+                events.append({
+                    "symbol": symbol,
+                    "earnings_date": data.get("earnings_date_str", "Unknown"),
+                    "days_until": days_until,
+                    "days_until_str": f"in {days_until} day{'s' if days_until != 1 else ''}",
+                    "timing": data.get("timing"),  # BMO, AMC, or None
+                    "timing_str": f" ({data['timing']})" if data.get("timing") else "",
+                    "urgency": urgency,
+                    "accounts": accounts_str,
+                })
+        
+        # Sort by days_until (soonest first)
+        events.sort(key=lambda x: x["days_until"])
+        return events
     
     def _collect_portfolio_symbols(self, portfolio_state) -> tuple[list[str], dict[str, list[str]]]:
         """Extract unique symbols and their account ownership from portfolio holdings.

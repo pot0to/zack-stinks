@@ -139,12 +139,22 @@ def _portfolio_spotlight() -> rx.Component:
                 ),
                 value="near_ath",
             ),
+            rx.tabs.trigger(
+                rx.hstack(
+                    rx.icon("calendar", size=14),
+                    rx.text("Upcoming Earnings"),
+                    spacing="2",
+                    align="center",
+                ),
+                value="earnings",
+            ),
         ),
         rx.tabs.content(_gap_events_content(), value="gaps", padding_top="1em"),
         rx.tabs.content(_breakout_events_content(), value="breakouts", padding_top="1em"),
         rx.tabs.content(_ma_proximity_content(), value="ma_proximity", padding_top="1em"),
         rx.tabs.content(_below_ma_content(), value="below_ma", padding_top="1em"),
         rx.tabs.content(_near_ath_content(), value="near_ath", padding_top="1em"),
+        rx.tabs.content(_upcoming_earnings_content(), value="earnings", padding_top="1em"),
         default_value="gaps",
         width="100%",
     )
@@ -677,4 +687,92 @@ def _market_card(label: str, values: dict) -> rx.Component:
             rx.text("L: ", values["low"], size="1", color="gray"),
             align_items="start",
         )
+    )
+
+
+def _upcoming_earnings_table_header() -> rx.Component:
+    """Header for upcoming earnings table."""
+    return rx.table.header(
+        rx.table.row(
+            rx.table.column_header_cell("Ticker"),
+            rx.table.column_header_cell("Earnings Date"),
+            rx.table.column_header_cell("Days Until"),
+            rx.table.column_header_cell(
+                rx.tooltip(
+                    rx.hstack(
+                        rx.text("Timing"),
+                        rx.icon("info", size=12, color="gray"),
+                        spacing="1",
+                        align="center",
+                    ),
+                    content="BMO = Before Market Open (pre-market), AMC = After Market Close (after-hours). "
+                            "Timing may not be available for all stocks.",
+                )
+            ),
+        ),
+    )
+
+
+def _upcoming_earnings_content() -> rx.Component:
+    """Upcoming earnings tab content showing holdings with earnings within 7 days."""
+    no_events = rx.text(
+        "No holdings have earnings announcements in the next 7 days.",
+        color="gray",
+        size="2",
+    )
+    
+    return rx.cond(
+        MarketState.upcoming_earnings_events.length() > 0,
+        rx.vstack(
+            rx.hstack(
+                rx.popover.root(
+                    rx.popover.trigger(
+                        rx.icon("info", size=14, color="gray", cursor="pointer"),
+                    ),
+                    rx.popover.content(
+                        rx.text(
+                            "Shows portfolio holdings with earnings announcements within the next 7 days. "
+                            "Earnings can cause significant price volatility. Consider reviewing your "
+                            "position sizing and risk exposure before earnings.",
+                            size="2",
+                        ),
+                        side="top",
+                        max_width="300px",
+                    ),
+                ),
+                rx.text("Holdings with upcoming earnings", size="1", color="gray"),
+                spacing="1",
+                align="center",
+            ),
+            rx.table.root(
+                _upcoming_earnings_table_header(),
+                rx.table.body(rx.foreach(MarketState.upcoming_earnings_events, _upcoming_earnings_row)),
+                width="100%",
+            ),
+            width="100%",
+        ),
+        no_events,
+    )
+
+
+def _upcoming_earnings_row(event: dict) -> rx.Component:
+    """Table row for upcoming earnings event with urgency-based color coding."""
+    # Urgency badge: red for imminent (0-3 days), yellow for soon (4-7 days)
+    urgency_badge = rx.cond(
+        event["urgency"] == "imminent",
+        rx.badge(event["days_until_str"], color_scheme="red"),
+        rx.badge(event["days_until_str"], color_scheme="yellow"),
+    )
+    
+    return rx.table.row(
+        rx.table.cell(rx.text(event["symbol"], weight="bold")),
+        rx.table.cell(event["earnings_date"]),
+        rx.table.cell(urgency_badge),
+        rx.table.cell(
+            rx.cond(
+                event["timing"] != None,
+                rx.badge(event["timing"], color_scheme="gray", variant="soft"),
+                rx.text("--", color="gray"),
+            )
+        ),
     )

@@ -467,9 +467,44 @@ def _stock_row(h: dict) -> rx.Component:
     
     Only position-specific values are masked (shares, value, cost, P/L, allocation).
     Current price is market data and not masked.
+    Includes earnings badge for stocks with earnings within 7 days.
     """
+    # Symbol cell with optional earnings badge
+    symbol_cell = rx.table.cell(
+        rx.hstack(
+            rx.text(h["symbol"], weight="bold"),
+            # Earnings badge: calendar icon with urgency color coding
+            # Each urgency level gets its own tooltip to avoid nested rx.cond issues
+            rx.cond(
+                h["has_upcoming_earnings"],
+                rx.cond(
+                    h["earnings_urgency"] == "imminent",
+                    rx.tooltip(
+                        rx.badge(
+                            rx.icon("calendar", size=12),
+                            color_scheme="red",
+                            variant="soft",
+                        ),
+                        content=h["earnings_tooltip"],
+                    ),
+                    rx.tooltip(
+                        rx.badge(
+                            rx.icon("calendar", size=12),
+                            color_scheme="yellow",
+                            variant="soft",
+                        ),
+                        content=h["earnings_tooltip"],
+                    ),
+                ),
+                rx.fragment(),
+            ),
+            spacing="2",
+            align="center",
+        )
+    )
+    
     return rx.table.row(
-        rx.table.cell(rx.text(h["symbol"], weight="bold")),
+        symbol_cell,
         rx.table.cell(h["price"]),  # Market price - not masked
         rx.table.cell(rx.cond(State.hide_portfolio_values, MASK_SHARES, h["shares"])),
         rx.table.cell(rx.cond(State.hide_portfolio_values, MASK_DOLLAR, h["value"])),

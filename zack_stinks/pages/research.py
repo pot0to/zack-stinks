@@ -159,6 +159,13 @@ def _technical_stats_row() -> rx.Component:
             info_text="Position within 52-week trading range. 0% = at 52-week low, 100% = at 52-week high.",
         ),
         stat_card(
+            "Next Earnings",
+            ResearchState.next_earnings,
+            ResearchState.next_earnings_detail,
+            info_text="Next scheduled earnings announcement date. BMO = Before Market Open (pre-market), "
+                      "AMC = After Market Close (after-hours). ETFs and index funds do not have earnings dates.",
+        ),
+        stat_card(
             "RSI (14)",
             ResearchState.rsi_14,
             badge=_rsi_zone_badge(),

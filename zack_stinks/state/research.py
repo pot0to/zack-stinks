@@ -6,7 +6,7 @@ import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from .base import BaseState
-from ..utils.technical import calculate_ma_proximity, calculate_ma_series
+from ..utils.technical import calculate_ma_proximity, calculate_ma_series, get_earnings_date
 from ..utils.cache import get_cached, set_cached, DEFAULT_TTL
 
 
@@ -37,6 +37,10 @@ class ResearchState(BaseState):
     _macd_signal_line: list = []
     _macd_histogram: list = []
     _indicator_dates: list = []
+    
+    # Earnings date
+    next_earnings: str = "--"
+    next_earnings_detail: str = "--"  # "in X days (BMO/AMC)"
     
     # Fundamental indicators
     has_fundamentals: bool = True  # False for ETFs
@@ -237,6 +241,9 @@ class ResearchState(BaseState):
 
             # Fetch fundamental data from ticker info
             await self._fetch_fundamentals(ticker_obj)
+            
+            # Fetch earnings date
+            await self._fetch_earnings_date()
 
             yield rx.toast.success(f"Loaded {self.ticker}")
 
@@ -592,3 +599,41 @@ class ResearchState(BaseState):
         self.roe_zone = "--"
         self.debt_to_equity = "N/A"
         self.debt_to_equity_zone = "--"
+
+    async def _fetch_earnings_date(self):
+        """Fetch next earnings date for the current ticker.
+        
+        Uses the shared get_earnings_date utility which handles caching.
+        """
+        try:
+            earnings_data = await asyncio.to_thread(get_earnings_date, self.ticker)
+            
+            date_str = earnings_data.get("earnings_date_str")
+            days_until = earnings_data.get("days_until")
+            timing = earnings_data.get("timing")
+            
+            if date_str:
+                self.next_earnings = date_str
+                
+                # Build detail string: "in X days (BMO)" or just "in X days"
+                if days_until is not None:
+                    if days_until == 0:
+                        days_str = "Today"
+                    elif days_until == 1:
+                        days_str = "Tomorrow"
+                    elif days_until < 0:
+                        days_str = f"{abs(days_until)} days ago"
+                    else:
+                        days_str = f"in {days_until} days"
+                    
+                    timing_str = f" ({timing})" if timing else ""
+                    self.next_earnings_detail = f"{days_str}{timing_str}"
+                else:
+                    self.next_earnings_detail = timing if timing else "--"
+            else:
+                self.next_earnings = "N/A"
+                self.next_earnings_detail = "--"
+                
+        except Exception:
+            self.next_earnings = "N/A"
+            self.next_earnings_detail = "--"

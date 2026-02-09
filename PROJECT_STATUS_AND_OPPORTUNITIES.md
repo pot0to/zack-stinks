@@ -71,6 +71,7 @@ The most critical gaps are: missing watchlist functionality, no dividend trackin
 
 | Feature | Implementation Notes |
 |---------|---------------------|
+| Earnings Date Integration | New "Upcoming Earnings" tab in Portfolio Spotlight showing holdings with earnings within 7 days; calendar icon badge in portfolio holdings table with urgency color coding (red 0-3 days, yellow 4-7 days); "Next Earnings" stat card on Research page with date and BMO/AMC timing |
 | Per-Ticker Delta Exposure | New tab in allocation card showing aggregate delta per symbol combining stocks (delta=1/share) and options; filtered to tickers with open options positions only; separated by index funds vs individual stocks; visual bar chart with bullish/bearish color coding |
 | Sector Exposure Breakdown | Donut chart with Morningstar-inspired color scheme; shows top 6 sectors + "Other"; excludes index funds |
 | Enhanced RSI/MACD Display | 4-row subplot chart (price 50%, volume 15%, RSI 17.5%, MACD 17.5%) with reference lines |
