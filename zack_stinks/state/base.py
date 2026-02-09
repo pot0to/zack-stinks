@@ -18,10 +18,11 @@ class BaseState(rx.State):
     # Used to show loading indicators across the app while portfolio data is being fetched
     is_portfolio_loading: bool = False
     
-    # Login form state
-    login_username: str = ""
-    login_password: str = ""
-    mfa_input: str = ""
+    # Login UI state (non-sensitive fields only)
+    # SECURITY: Credentials (username, password, mfa_code) are NOT stored in Reflex state.
+    # They are captured only at form submission time via rx.form, transmitted once over
+    # TLS, used immediately for authentication, then discarded. This prevents credentials
+    # from being synced to server-side state management (Redis) on every keystroke.
     login_error: str = ""
     show_mfa_input: bool = False
     redirect_after_login: str = "/"  # Track where to redirect after successful login
@@ -32,16 +33,8 @@ class BaseState(rx.State):
     def toggle_hide_values(self):
         self.hide_portfolio_values = not self.hide_portfolio_values
     
-    def set_login_username(self, value: str):
-        self.login_username = value
-        self.login_error = ""
-    
-    def set_login_password(self, value: str):
-        self.login_password = value
-        self.login_error = ""
-    
-    def set_mfa_input(self, value: str):
-        self.mfa_input = value
+    def clear_login_error(self):
+        """Clear login error message when user starts typing."""
         self.login_error = ""
     
     def navigate_to_login(self, from_page: str = "/"):
@@ -70,14 +63,18 @@ class BaseState(rx.State):
         self.account_name = "User"
         return False
 
-    async def _perform_login(self, username: str, password: str):
-        """Common login logic for both form and credentials file methods."""
+    async def _perform_login(self, username: str, password: str, mfa_code: str = ""):
+        """Common login logic for both form and credentials file methods.
+        
+        SECURITY: Credentials are passed as function arguments, used immediately,
+        and never stored in instance state. They exist only in local scope.
+        """
         try:
             login_info = await asyncio.to_thread(
                 rs.login,
                 username=username,
                 password=password,
-                mfa_code=self.mfa_input if self.mfa_input else None,
+                mfa_code=mfa_code if mfa_code else None,
                 store_session=True
             )
             
@@ -85,7 +82,6 @@ class BaseState(rx.State):
                 user_profile = await asyncio.to_thread(rs.account.load_user_profile)
                 self.account_name = user_profile.get("first_name", "User")
                 self.is_logged_in = True
-                self.mfa_input = ""
                 self.show_mfa_input = False
                 return True, None
             else:
@@ -98,28 +94,31 @@ class BaseState(rx.State):
             else:
                 return False, f"Login error: {str(e)}"
 
-    async def login_with_form(self):
-        """Login using credentials from the UI form."""
-        if not self.login_username or not self.login_password:
-            self.login_error = "Please enter both username and password."
+    async def login_with_form(self, form_data: dict):
+        """Login using credentials submitted via form.
+        
+        SECURITY: Credentials arrive in form_data dict, are used immediately for
+        authentication, then go out of scope. They are never stored in Reflex state,
+        so they cannot be synced to server-side state management or logged.
+        """
+        username = form_data.get("username", "").strip()
+        password = form_data.get("password", "")
+        mfa_code = form_data.get("mfa_code", "").strip()
+        
+        if not username or not password:
+            self.login_error = "Please enter both email and password."
             return
         
         self.is_loading = True
         self.login_error = ""
         yield
         
-        success, error = await self._perform_login(self.login_username, self.login_password)
-        
-        # Always clear password from memory after attempt
-        self.login_password = ""
+        success, error = await self._perform_login(username, password, mfa_code)
+        # Credentials are now out of scope and eligible for garbage collection
         
         if success:
-            self.login_username = ""
             redirect_to = self.redirect_after_login or "/"
-            self.redirect_after_login = "/"  # Reset for next time
-            # Pre-fetch portfolio data immediately after login
-            # This ensures data is loading (or cached) before user navigates to portfolio
-            # Lazy import to avoid circular dependency at module load time
+            self.redirect_after_login = "/"
             from .portfolio import PortfolioState
             yield PortfolioState.fetch_all_portfolio_data
             yield rx.redirect(redirect_to)
@@ -140,13 +139,14 @@ class BaseState(rx.State):
             self.is_loading = False
             return
         
-        success, error = await self._perform_login(creds["username"], creds["password"])
+        success, error = await self._perform_login(
+            creds.get("username", ""),
+            creds.get("password", "")
+        )
         
         if success:
             redirect_to = self.redirect_after_login or "/"
-            self.redirect_after_login = "/"  # Reset for next time
-            # Pre-fetch portfolio data immediately after login
-            # Lazy import to avoid circular dependency at module load time
+            self.redirect_after_login = "/"
             from .portfolio import PortfolioState
             yield PortfolioState.fetch_all_portfolio_data
             yield rx.redirect(redirect_to)
@@ -163,8 +163,5 @@ class BaseState(rx.State):
             pass
         self.is_logged_in = False
         self.account_name = "User"
-        self.login_username = ""
-        self.login_password = ""
-        self.mfa_input = ""
         self.show_mfa_input = False
         yield rx.redirect("/")

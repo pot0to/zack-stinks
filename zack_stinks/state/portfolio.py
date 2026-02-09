@@ -1240,13 +1240,32 @@ class PortfolioState(BaseState):
                     self.range_52w_data = cached_data.get("range_52w_data", {})
                     self.earnings_data = cached_data.get("earnings_data", {})
                 
+                # Pre-compute display caches in background threads to avoid UI blocking
+                # on first tab interaction after cache restore
                 async with self:
-                    # Clear stale caches (computed vars will lazily rebuild on access)
-                    self._cached_stock_holdings = {}
-                    self._cached_option_holdings = {}
-                    self._cached_delta_exposure = {}
-                    self._cached_treemaps = {}
-                    self._cached_sector_charts = {}
+                    hide_values = self.hide_portfolio_values
+                    stock_sort_col = self.stock_sort_column
+                    stock_sort_asc = self.stock_sort_ascending
+                    options_sort_col = self.options_sort_column
+                    options_sort_asc = self.options_sort_ascending
+                
+                new_stock_caches, new_option_caches, new_delta_caches, new_treemap_caches, new_sector_caches = \
+                    await self._precompute_caches_in_background(
+                        cached_data["all_stock_holdings"],
+                        cached_data["all_options_holdings"],
+                        cached_data.get("sector_data", {}),
+                        cached_data.get("range_52w_data", {}),
+                        cached_data.get("earnings_data", {}),
+                        hide_values, stock_sort_col, stock_sort_asc, options_sort_col, options_sort_asc
+                    )
+                
+                async with self:
+                    # Replace caches atomically with pre-computed values
+                    self._cached_stock_holdings = new_stock_caches
+                    self._cached_option_holdings = new_option_caches
+                    self._cached_delta_exposure = new_delta_caches
+                    self._cached_treemaps = new_treemap_caches
+                    self._cached_sector_charts = new_sector_caches
                 
                 async with self:
                     if not self.selected_account and account_names:
@@ -1386,6 +1405,371 @@ class PortfolioState(BaseState):
             # and analyze_portfolio_positions handles cleanup on success path
             pass
 
+    async def _precompute_caches_in_background(
+        self,
+        all_stocks: dict,
+        all_options: dict,
+        sector_data: dict,
+        range_52w_data: dict,
+        earnings_data: dict,
+        hide_values: bool,
+        stock_sort_col: str,
+        stock_sort_asc: bool,
+        options_sort_col: str,
+        options_sort_asc: bool,
+    ) -> tuple[dict, dict, dict, dict, dict]:
+        """Pre-compute all display caches in background threads.
+        
+        Runs CPU-intensive formatting and Plotly figure generation off the
+        main thread to prevent UI blocking. Returns new cache dictionaries
+        that can be atomically swapped into state.
+        
+        This eliminates the "cache miss window" where a tab click would
+        trigger synchronous cache rebuilding and block the UI.
+        """
+        new_stock_caches = {}
+        new_option_caches = {}
+        new_delta_caches = {}
+        new_treemap_caches = {}
+        new_sector_caches = {}
+        
+        async def compute_for_account(acc_num: str):
+            """Compute all caches for a single account in thread pool."""
+            # Build cache keys
+            stock_key = f"{acc_num}:{stock_sort_col}:{stock_sort_asc}"
+            option_key = f"{acc_num}:{options_sort_col}:{options_sort_asc}"
+            treemap_key = f"{acc_num}:{hide_values}"
+            sector_key = f"{acc_num}:{hide_values}"
+            
+            # Get raw data for this account
+            raw_stocks = all_stocks.get(acc_num, [])
+            raw_options = all_options.get(acc_num, [])
+            account_sector_data = sector_data.get(acc_num, {})
+            
+            # Format stock holdings (CPU-bound, run in thread)
+            def format_stocks():
+                if not raw_stocks:
+                    return []
+                total_equity = sum(float(item.get("raw_equity", 0)) for item in raw_stocks)
+                formatted = []
+                for item in raw_stocks:
+                    val = float(item.get("raw_equity", 0))
+                    shares = float(item.get("shares", 0))
+                    price = float(item.get("price", 0))
+                    avg_buy_price = float(item.get("average_buy_price", 0))
+                    cost_basis = float(item.get("cost_basis", 0))
+                    pl = float(item.get("pl", 0))
+                    cost_basis_reliable = item.get("cost_basis_reliable", True)
+                    
+                    pl_pct = (pl / cost_basis * 100) if cost_basis > 0 and cost_basis_reliable else 0
+                    allocation = (val / total_equity * 100) if total_equity > 0 else 0
+                    
+                    symbol = item.get("symbol", "???")
+                    range_52w = range_52w_data.get(symbol)
+                    
+                    earnings_info = earnings_data.get(symbol, {})
+                    days_until_earnings = earnings_info.get("days_until")
+                    has_upcoming_earnings = days_until_earnings is not None and 0 <= days_until_earnings <= 7
+                    
+                    earnings_urgency = None
+                    if has_upcoming_earnings:
+                        earnings_urgency = "imminent" if days_until_earnings <= 3 else "soon"
+                    
+                    earnings_tooltip = ""
+                    if has_upcoming_earnings:
+                        date_str = earnings_info.get("earnings_date_str", "")
+                        timing = earnings_info.get("timing", "")
+                        timing_str = f" ({timing})" if timing else ""
+                        days_str = f"in {days_until_earnings} day{'s' if days_until_earnings != 1 else ''}"
+                        earnings_tooltip = f"Earnings {date_str}{timing_str} - {days_str}"
+                    
+                    formatted.append({
+                        "symbol": symbol,
+                        "price_raw": price,
+                        "price": f"${price:,.2f}",
+                        "shares_raw": shares,
+                        "shares": f"{shares:.4f}",
+                        "value_raw": val,
+                        "value": f"${val:,.2f}",
+                        "avg_cost_raw": avg_buy_price if cost_basis_reliable else None,
+                        "avg_cost": f"${avg_buy_price:,.2f}" if cost_basis_reliable else "N/A",
+                        "pl_raw": pl if cost_basis_reliable else None,
+                        "pl": pl,
+                        "pl_formatted": (f"${abs(pl):,.2f}" if pl >= 0 else f"-${abs(pl):,.2f}") if cost_basis_reliable else "N/A",
+                        "pl_pct_raw": pl_pct if cost_basis_reliable else None,
+                        "pl_pct_formatted": (f"{abs(pl_pct):.2f}%" if pl_pct >= 0 else f"-{abs(pl_pct):.2f}%") if cost_basis_reliable else "N/A",
+                        "pl_positive": pl >= 0,
+                        "cost_basis_reliable": cost_basis_reliable,
+                        "allocation": f"{allocation:.2f}%",
+                        "allocation_raw": allocation,
+                        "raw_equity": val,
+                        "range_52w_raw": range_52w,
+                        "range_52w": f"{range_52w:.0f}%" if range_52w is not None else "N/A",
+                        "has_upcoming_earnings": has_upcoming_earnings,
+                        "earnings_urgency": earnings_urgency,
+                        "earnings_tooltip": earnings_tooltip,
+                    })
+                formatted.sort(key=lambda x: _sort_key_for_column(x, stock_sort_col), reverse=not stock_sort_asc)
+                return formatted
+            
+            # Format option holdings (CPU-bound, run in thread)
+            def format_options():
+                if not raw_options:
+                    return []
+                stock_exposure = sum(abs(float(s.get("raw_equity", 0))) for s in raw_stocks)
+                option_exposure = sum(abs(float(o.get("raw_equity", 0))) for o in raw_options)
+                total_exposure = stock_exposure + option_exposure
+                
+                formatted = []
+                for item in raw_options:
+                    val = float(item.get("raw_equity", 0))
+                    is_short = item.get("is_short", False)
+                    weight = (abs(val) / total_exposure * 100) if total_exposure > 0 else 0
+                    strike = float(item.get("strike_price", 0))
+                    option_type = item.get("option_type", "")
+                    dte = int(item.get("dte", 0))
+                    delta = float(item.get("delta", 0))
+                    underlying = float(item.get("underlying_price", 0))
+                    cost_basis = float(item.get("cost_basis", 0))
+                    current_value = float(item.get("current_value", 0))
+                    pl = float(item.get("pl", 0))
+                    pl_pct = (pl / cost_basis * 100) if cost_basis > 0 else 0
+                    is_itm = (option_type == "Call" and underlying > strike) or \
+                             (option_type == "Put" and underlying < strike)
+                    
+                    formatted.append({
+                        "symbol": item.get("symbol", "???"),
+                        "strike_raw": strike,
+                        "strike": f"${strike:,.2f}",
+                        "option_type": option_type,
+                        "side": "Short" if is_short else "Long",
+                        "dte": str(dte),
+                        "dte_raw": dte,
+                        "underlying_raw": underlying,
+                        "underlying": f"${underlying:,.2f}",
+                        "delta_raw": delta,
+                        "delta": f"{delta:.3f}",
+                        "cost_basis_raw": cost_basis,
+                        "cost_basis": f"${cost_basis:,.2f}",
+                        "current_value_raw": current_value,
+                        "current_value": f"${current_value:,.2f}",
+                        "pl": pl,
+                        "pl_raw": pl,
+                        "pl_formatted": f"${abs(pl):,.2f}" if pl >= 0 else f"-${abs(pl):,.2f}",
+                        "pl_pct_raw": pl_pct,
+                        "pl_pct_formatted": f"{abs(pl_pct):.2f}%" if pl_pct >= 0 else f"-{abs(pl_pct):.2f}%",
+                        "pl_positive": pl >= 0,
+                        "weight_raw": weight,
+                        "weight": f"{weight:.2f}%",
+                        "is_short": is_short,
+                        "is_itm": is_itm,
+                        "raw_equity": val,
+                    })
+                formatted.sort(key=lambda x: _sort_key_for_column(x, options_sort_col), reverse=not options_sort_asc)
+                return formatted
+            
+            # Compute delta exposure
+            def compute_delta():
+                symbols_with_options = {o.get("symbol", "") for o in raw_options if o.get("symbol")}
+                if not symbols_with_options:
+                    return []
+                
+                delta_by_symbol = {}
+                for stock in raw_stocks:
+                    symbol = stock.get("symbol", "")
+                    if symbol and symbol in symbols_with_options:
+                        shares = float(stock.get("shares", 0))
+                        if symbol not in delta_by_symbol:
+                            delta_by_symbol[symbol] = {"stock_delta": 0.0, "options_delta": 0.0}
+                        delta_by_symbol[symbol]["stock_delta"] += shares
+                
+                for option in raw_options:
+                    symbol = option.get("symbol", "")
+                    if symbol:
+                        contracts = float(option.get("shares", 0))
+                        option_delta = float(option.get("delta", 0))
+                        is_short = option.get("is_short", False)
+                        position_delta = contracts * SHARES_PER_CONTRACT * option_delta
+                        if is_short:
+                            position_delta = -position_delta
+                        if symbol not in delta_by_symbol:
+                            delta_by_symbol[symbol] = {"stock_delta": 0.0, "options_delta": 0.0}
+                        delta_by_symbol[symbol]["options_delta"] += position_delta
+                
+                result = []
+                max_abs_delta = 0.0
+                for symbol, deltas in delta_by_symbol.items():
+                    stock_d = deltas["stock_delta"]
+                    options_d = deltas["options_delta"]
+                    net_d = stock_d + options_d
+                    max_abs_delta = max(max_abs_delta, abs(net_d))
+                    result.append({
+                        "symbol": symbol,
+                        "stock_delta_raw": stock_d,
+                        "stock_delta": f"{stock_d:+,.0f}" if stock_d != 0 else "0",
+                        "options_delta_raw": options_d,
+                        "options_delta": f"{options_d:+,.0f}" if options_d != 0 else "0",
+                        "net_delta_raw": net_d,
+                        "net_delta": f"{net_d:+,.0f}",
+                        "is_bullish": net_d >= 0,
+                        "is_index_fund": is_index_fund(symbol),
+                    })
+                
+                for item in result:
+                    bar_pct = (abs(item["net_delta_raw"]) / max_abs_delta * 100) if max_abs_delta > 0 else 0
+                    item["bar_width"] = f"{bar_pct:.0f}%"
+                result.sort(key=lambda x: abs(x["net_delta_raw"]), reverse=True)
+                return result
+            
+            # Build treemap figure (CPU-intensive Plotly generation)
+            def build_treemap():
+                if not raw_stocks and not raw_options:
+                    return go.Figure()
+                
+                labels, values, colors, hover_texts = [], [], [], []
+                for s in raw_stocks:
+                    labels.append(s.get("symbol", "???"))
+                    value = abs(float(s.get("raw_equity", 0)))
+                    values.append(value)
+                    cost_basis = float(s.get("cost_basis", 0))
+                    pl = float(s.get("pl", 0))
+                    cost_basis_reliable = s.get("cost_basis_reliable", True)
+                    
+                    if cost_basis_reliable and cost_basis > 0:
+                        pl_pct = (pl / cost_basis) * 100
+                        pl_pct_str = f"{pl_pct:+.2f}%"
+                        pl_dollar_str = f"+${pl:,.2f}" if pl >= 0 else f"-${abs(pl):,.2f}"
+                    else:
+                        pl_pct = None
+                        pl_pct_str = "N/A"
+                        pl_dollar_str = "N/A"
+                    
+                    colors.append(_pl_to_color(pl_pct))
+                    if hide_values:
+                        hover_texts.append("*****<br>P/L: *****")
+                    else:
+                        hover_texts.append(f"${value:,.2f}<br>P/L: {pl_dollar_str} ({pl_pct_str})")
+                
+                options_by_symbol = {}
+                for o in raw_options:
+                    symbol = o.get("symbol", "???")
+                    value = abs(float(o.get("raw_equity", 0)))
+                    cost_basis = float(o.get("cost_basis", 0))
+                    pl = float(o.get("pl", 0))
+                    if symbol not in options_by_symbol:
+                        options_by_symbol[symbol] = {"value": 0, "cost_basis": 0, "pl": 0}
+                    options_by_symbol[symbol]["value"] += value
+                    options_by_symbol[symbol]["cost_basis"] += cost_basis
+                    options_by_symbol[symbol]["pl"] += pl
+                
+                for symbol, data in options_by_symbol.items():
+                    labels.append(f"{symbol} (Opt)")
+                    values.append(data["value"])
+                    if data["cost_basis"] > 0:
+                        pl_pct = (data["pl"] / data["cost_basis"]) * 100
+                        pl_pct_str = f"{pl_pct:+.2f}%"
+                        pl_dollar_str = f"+${data['pl']:,.2f}" if data["pl"] >= 0 else f"-${abs(data['pl']):,.2f}"
+                    else:
+                        pl_pct = None
+                        pl_pct_str = "N/A"
+                        pl_dollar_str = "N/A"
+                    colors.append(_pl_to_color(pl_pct))
+                    if hide_values:
+                        hover_texts.append("*****<br>P/L: *****")
+                    else:
+                        hover_texts.append(f"${data['value']:,.2f}<br>P/L: {pl_dollar_str} ({pl_pct_str})")
+                
+                fig = go.Figure(go.Treemap(
+                    labels=labels, parents=[""] * len(labels), values=values,
+                    textinfo="label+percent parent", marker=dict(colors=colors),
+                    textfont=dict(color="black"),
+                    hovertemplate="<b>%{label}</b><br>%{customdata}<extra></extra>",
+                    customdata=hover_texts,
+                ))
+                fig.update_layout(margin=dict(t=0, l=0, r=0, b=0), template="plotly_dark", height=300)
+                return fig
+            
+            # Build sector chart (CPU-intensive Plotly generation)
+            def build_sector_chart():
+                if not account_sector_data:
+                    return go.Figure()
+                
+                sorted_sectors = sorted(account_sector_data.items(), key=lambda x: x[1], reverse=True)
+                top_sectors = sorted_sectors[:6]
+                other_value = sum(v for _, v in sorted_sectors[6:])
+                
+                labels = [s[0] for s in top_sectors]
+                values = [s[1] for s in top_sectors]
+                if other_value > 0:
+                    labels.append("Other")
+                    values.append(other_value)
+                
+                sector_colors = {
+                    "Consumer Cyclical": "#EF7622", "Consumer Discretionary": "#EF7622",
+                    "Financial Services": "#F59E0B", "Financials": "#F59E0B",
+                    "Real Estate": "#D97706", "Basic Materials": "#B45309", "Materials": "#B45309",
+                    "Technology": "#1F55A5", "Information Technology": "#1F55A5",
+                    "Communication Services": "#3B82F6", "Energy": "#0EA5E9",
+                    "Industrials": "#6366F1", "Healthcare": "#518428",
+                    "Consumer Defensive": "#22C55E", "Consumer Staples": "#22C55E",
+                    "Utilities": "#10B981", "Other": "#6B7280",
+                }
+                colors = [sector_colors.get(label, "#6B7280") for label in labels]
+                total = sum(values)
+                
+                hover_template = "<b>%{label}</b><br>*****<br>%{percent}<extra></extra>" if hide_values else \
+                                 "<b>%{label}</b><br>$%{value:,.0f}<br>%{percent}<extra></extra>"
+                
+                fig = go.Figure(go.Pie(
+                    labels=labels, values=values, hole=0.5, marker=dict(colors=colors),
+                    textinfo="label+percent", textposition="outside", automargin=False,
+                    hovertemplate=hover_template,
+                ))
+                fig.update_layout(
+                    template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+                    height=350, margin=dict(t=70, l=80, r=80, b=70), showlegend=False,
+                    annotations=[dict(
+                        text=f"${total:,.0f}" if not hide_values else "*****",
+                        x=0.5, y=0.5, font_size=16, font_color="white", showarrow=False,
+                    )],
+                )
+                return fig
+            
+            # Run all computations in thread pool
+            stock_cache, option_cache, delta_cache, treemap, sector_chart = await asyncio.gather(
+                asyncio.to_thread(format_stocks),
+                asyncio.to_thread(format_options),
+                asyncio.to_thread(compute_delta),
+                asyncio.to_thread(build_treemap),
+                asyncio.to_thread(build_sector_chart),
+            )
+            
+            return acc_num, stock_key, stock_cache, option_key, option_cache, delta_cache, treemap_key, treemap, sector_key, sector_chart
+        
+        # Pre-compute for all accounts in parallel
+        account_nums = list(all_stocks.keys())
+        if not account_nums:
+            return new_stock_caches, new_option_caches, new_delta_caches, new_treemap_caches, new_sector_caches
+        
+        results = await asyncio.gather(
+            *[compute_for_account(acc_num) for acc_num in account_nums],
+            return_exceptions=True
+        )
+        
+        # Aggregate results into cache dictionaries, skipping any failed accounts
+        for result in results:
+            if isinstance(result, Exception):
+                print(f"Error pre-computing cache for account: {result}")
+                continue
+            acc_num, stock_key, stock_cache, option_key, option_cache, delta_cache, treemap_key, treemap, sector_key, sector_chart = result
+            new_stock_caches[stock_key] = stock_cache
+            new_option_caches[option_key] = option_cache
+            new_delta_caches[acc_num] = delta_cache
+            new_treemap_caches[treemap_key] = treemap
+            new_sector_caches[sector_key] = sector_chart
+        
+        return new_stock_caches, new_option_caches, new_delta_caches, new_treemap_caches, new_sector_caches
+
     @rx.event(background=True)
     async def analyze_portfolio_positions(self):
         """Fetch sector, 52-week range, and earnings data in background.
@@ -1393,21 +1777,22 @@ class PortfolioState(BaseState):
         Runs as a separate background task after core portfolio data loads,
         keeping the UI responsive for tab switching and other interactions.
         
-        Note: loading_phase is set to ANALYZING by fetch_all_portfolio_data
-        before this method is called, eliminating timing gaps. This method
-        is responsible for setting loading_phase to IDLE when complete.
-        
-        Caches are cleared when new data arrives; computed vars lazily rebuild
-        them on access.
+        Pre-computes all display caches in background threads before updating
+        state, eliminating the "cache miss window" that previously caused UI
+        blocking when users clicked tabs during analysis.
         """
         # Capture local copies of state for consistency during async operations
-        # Also reset retry count since this is a fresh analysis
         async with self:
             all_stocks = dict(self.all_stock_holdings)
             all_options = dict(self.all_options_holdings)
             metric_data = dict(self.metric_data)
             sp500_pct = self.sp500_daily_change_pct
             account_map = dict(self.account_map)
+            hide_values = self.hide_portfolio_values
+            stock_sort_col = self.stock_sort_column
+            stock_sort_asc = self.stock_sort_ascending
+            options_sort_col = self.options_sort_column
+            options_sort_asc = self.options_sort_ascending
             self._retry_count = 0  # Reset for fresh analysis
 
         try:
@@ -1417,15 +1802,26 @@ class PortfolioState(BaseState):
             # Fetch sector, range, and earnings data
             sector_data, range_52w_data, earnings_data, has_failures = await self._fetch_sector_and_range_data(all_stocks)
 
-            # Update reactive state variables (brief lock)
-            # Caches are cleared; computed vars will lazily rebuild on access
+            # Pre-compute all caches in background threads BEFORE updating state
+            # This eliminates the cache miss window that caused UI blocking
+            new_stock_caches, new_option_caches, new_delta_caches, new_treemap_caches, new_sector_caches = \
+                await self._precompute_caches_in_background(
+                    all_stocks, all_options, sector_data, range_52w_data, earnings_data,
+                    hide_values, stock_sort_col, stock_sort_asc, options_sort_col, options_sort_asc
+                )
+
+            # Atomically update state with new data AND pre-computed caches
+            # No cache miss window since caches are already populated
             async with self:
                 self.sector_data = sector_data
                 self.range_52w_data = range_52w_data
                 self.earnings_data = earnings_data
-                # Clear stale caches (computed vars will lazily rebuild on access)
-                self._cached_stock_holdings = {}
-                self._cached_sector_charts = {}
+                # Replace caches atomically with pre-computed values
+                self._cached_stock_holdings = new_stock_caches
+                self._cached_option_holdings = new_option_caches
+                self._cached_delta_exposure = new_delta_caches
+                self._cached_treemaps = new_treemap_caches
+                self._cached_sector_charts = new_sector_caches
             
             # If some symbols failed, schedule a background retry for eventual consistency
             if has_failures:
@@ -1449,11 +1845,10 @@ class PortfolioState(BaseState):
             print(f"Error analyzing portfolio: {e}")
         finally:
             # Only reset to IDLE if we're not scheduling a retry
-            # (retry_failed_analysis will handle its own cleanup)
             async with self:
                 if self.loading_phase != PortfolioLoadingPhase.RETRYING:
                     self._set_loading_phase(PortfolioLoadingPhase.IDLE)
-                    self.is_portfolio_loading = False  # Hide global loading indicator
+                    self.is_portfolio_loading = False
 
 
     @rx.event(background=True)
@@ -1464,9 +1859,9 @@ class PortfolioState(BaseState):
         backoff (30s, 60s, 120s, 240s, 480s) to avoid hammering Yahoo Finance and
         to allow transient issues (like "Invalid Crumb" errors) to resolve.
         
-        Provides eventual consistency: even if some symbols fail initially,
-        they will be retried and the UI will update when data becomes available.
-        Stops after MAX_RETRIES attempts to prevent infinite loops.
+        Pre-computes all display caches in background threads before updating
+        state, eliminating the "cache miss window" that previously caused UI
+        blocking when users clicked tabs during retries.
         """
         import random
         
@@ -1491,13 +1886,18 @@ class PortfolioState(BaseState):
         jitter = random.uniform(0, delay * 0.1)
         await asyncio.sleep(delay + jitter)
         
-        # Capture current state
+        # Capture current state including sort/privacy settings for cache keys
         async with self:
             all_stocks = dict(self.all_stock_holdings)
+            all_options = dict(self.all_options_holdings)
             account_map = dict(self.account_map)
             metric_data = dict(self.metric_data)
             sp500_pct = self.sp500_daily_change_pct
-            all_options = dict(self.all_options_holdings)
+            hide_values = self.hide_portfolio_values
+            stock_sort_col = self.stock_sort_column
+            stock_sort_asc = self.stock_sort_ascending
+            options_sort_col = self.options_sort_column
+            options_sort_asc = self.options_sort_ascending
         
         if not all_stocks:
             async with self:
@@ -1509,13 +1909,24 @@ class PortfolioState(BaseState):
             # Re-fetch (short TTL cache will have expired, forcing fresh fetch)
             sector_data, range_52w_data, earnings_data, has_failures = await self._fetch_sector_and_range_data(all_stocks)
             
-            # Update state with new data
+            # Pre-compute all caches in background threads BEFORE updating state
+            new_stock_caches, new_option_caches, new_delta_caches, new_treemap_caches, new_sector_caches = \
+                await self._precompute_caches_in_background(
+                    all_stocks, all_options, sector_data, range_52w_data, earnings_data,
+                    hide_values, stock_sort_col, stock_sort_asc, options_sort_col, options_sort_asc
+                )
+            
+            # Atomically update state with new data AND pre-computed caches
             async with self:
                 self.sector_data = sector_data
                 self.range_52w_data = range_52w_data
                 self.earnings_data = earnings_data
-                self._cached_stock_holdings = {}
-                self._cached_sector_charts = {}
+                # Replace caches atomically with pre-computed values
+                self._cached_stock_holdings = new_stock_caches
+                self._cached_option_holdings = new_option_caches
+                self._cached_delta_exposure = new_delta_caches
+                self._cached_treemaps = new_treemap_caches
+                self._cached_sector_charts = new_sector_caches
             
             # Update the main portfolio cache with complete data
             set_cached("portfolio_data", {
