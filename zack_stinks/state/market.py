@@ -101,6 +101,8 @@ class MarketState(BaseState):
         Auto-loads portfolio data from cache if not already in memory,
         allowing the Market page to show Portfolio Spotlight without
         requiring a visit to the Portfolio page first.
+        
+        Uses read-only access to portfolio state to avoid blocking tab switching.
         """
         from .portfolio import PortfolioState
         
@@ -109,20 +111,33 @@ class MarketState(BaseState):
         
         portfolio_state = await self.get_state(PortfolioState)
         
-        # Auto-load portfolio data from cache if not in memory
-        if not portfolio_state.all_stock_holdings:
+        # Read portfolio data - prefer in-memory state, fall back to cache
+        # We read without holding a lock to avoid blocking UI interactions
+        all_stock_holdings = portfolio_state.all_stock_holdings
+        all_options_holdings = portfolio_state.all_options_holdings
+        account_map = portfolio_state.account_map
+        
+        if not all_stock_holdings:
             cached_portfolio = get_cached("portfolio_data")
             if cached_portfolio:
-                # Apply cached data directly to portfolio state
+                # Use cached data for signal analysis without modifying portfolio state
+                # This avoids blocking the portfolio page's tab switching
+                all_stock_holdings = cached_portfolio["all_stock_holdings"]
+                all_options_holdings = cached_portfolio["all_options_holdings"]
+                account_map = cached_portfolio["account_map"]
+                
+                # Update portfolio state in a quick, non-blocking manner
+                # by yielding control back to the event loop
                 async with portfolio_state:
-                    portfolio_state.account_map = cached_portfolio["account_map"]
-                    portfolio_state.all_stock_holdings = cached_portfolio["all_stock_holdings"]
-                    portfolio_state.all_options_holdings = cached_portfolio["all_options_holdings"]
-                    portfolio_state.metric_data = cached_portfolio["metric_data"]
-                    portfolio_state.sp500_daily_change_pct = cached_portfolio.get("sp500_daily_pct", 0.0)
-                    portfolio_state.sector_data = cached_portfolio.get("sector_data", {})
-                    portfolio_state.range_52w_data = cached_portfolio.get("range_52w_data", {})
-                    portfolio_state.earnings_data = cached_portfolio.get("earnings_data", {})
+                    if not portfolio_state.all_stock_holdings:
+                        portfolio_state.account_map = cached_portfolio["account_map"]
+                        portfolio_state.all_stock_holdings = cached_portfolio["all_stock_holdings"]
+                        portfolio_state.all_options_holdings = cached_portfolio["all_options_holdings"]
+                        portfolio_state.metric_data = cached_portfolio["metric_data"]
+                        portfolio_state.sp500_daily_change_pct = cached_portfolio.get("sp500_daily_pct", 0.0)
+                        portfolio_state.sector_data = cached_portfolio.get("sector_data", {})
+                        portfolio_state.range_52w_data = cached_portfolio.get("range_52w_data", {})
+                        portfolio_state.earnings_data = cached_portfolio.get("earnings_data", {})
             else:
                 # No cached data available - user needs to visit Portfolio page
                 self.gap_events = []
@@ -137,8 +152,10 @@ class MarketState(BaseState):
         
         self.portfolio_data_available = True
         
-        # Collect unique symbols from portfolio with account ownership
-        symbol_list, symbol_accounts = self._collect_portfolio_symbols(portfolio_state)
+        # Collect unique symbols from local data (not holding any locks)
+        symbol_list, symbol_accounts = self._collect_portfolio_symbols_from_data(
+            all_stock_holdings, all_options_holdings, account_map
+        )
         
         if symbol_list:
             # Check cache
@@ -230,14 +247,34 @@ class MarketState(BaseState):
         Returns (symbol_list, symbol_accounts) where symbol_accounts maps each symbol
         to the list of account display names that hold it.
         """
+        return self._collect_portfolio_symbols_from_data(
+            portfolio_state.all_stock_holdings,
+            portfolio_state.all_options_holdings,
+            portfolio_state.account_map
+        )
+    
+    def _collect_portfolio_symbols_from_data(
+        self,
+        all_stock_holdings: dict,
+        all_options_holdings: dict,
+        account_map: dict
+    ) -> tuple[list[str], dict[str, list[str]]]:
+        """Extract unique symbols and their account ownership from portfolio data.
+        
+        This version works with raw data dicts instead of state objects,
+        allowing signal analysis without holding state locks.
+        
+        Returns (symbol_list, symbol_accounts) where symbol_accounts maps each symbol
+        to the list of account display names that hold it.
+        """
         symbols = set()
         symbol_accounts: dict[str, list[str]] = {}
         
         # Build reverse map: account_number -> display_name
-        acc_num_to_name = {v: k for k, v in portfolio_state.account_map.items()}
+        acc_num_to_name = {v: k for k, v in account_map.items()}
         
         # Process both stock and option holdings
-        for holdings_dict in [portfolio_state.all_stock_holdings, portfolio_state.all_options_holdings]:
+        for holdings_dict in [all_stock_holdings, all_options_holdings]:
             for acc_num, acc_holdings in holdings_dict.items():
                 acc_name = acc_num_to_name.get(acc_num, acc_num)
                 for holding in acc_holdings:

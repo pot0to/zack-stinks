@@ -641,7 +641,7 @@ def _options_table_header() -> rx.Component:
             _sortable_options_header("Current Value", "current_value_raw"),
             _sortable_options_header("P/L ($)", "pl_raw"),
             _sortable_options_header("P/L (%)", "pl_pct_raw"),
-            _sortable_options_header("Weight", "weight_raw"),
+            _sortable_options_header("Portfolio %", "weight_raw"),
         ),
     )
 
