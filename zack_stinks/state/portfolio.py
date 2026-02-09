@@ -112,6 +112,12 @@ class PortfolioState(BaseState):
     all_options_holdings: dict[str, list[dict]] = {}
     metric_data: dict[str, dict[str, str | float]] = {}
     
+    # Sector exposure data: maps account_number -> {sector: value}
+    sector_data: dict[str, dict[str, float]] = {}
+    
+    # 52-week range data: maps symbol -> range_pct (0-100)
+    range_52w_data: dict[str, float] = {}
+    
     # S&P 500 benchmark data for comparison
     sp500_daily_change_pct: float = 0.0
 
@@ -174,8 +180,12 @@ class PortfolioState(BaseState):
             pl_pct = (pl / cost_basis * 100) if cost_basis > 0 and cost_basis_reliable else 0
             allocation = (val / total_equity * 100) if total_equity > 0 else 0
             
+            # 52-week range position from cached data
+            symbol = item.get("symbol", "???")
+            range_52w = self.range_52w_data.get(symbol)
+            
             formatted.append({
-                "symbol": item.get("symbol", "???"),
+                "symbol": symbol,
                 "price_raw": price,
                 "price": f"${price:,.2f}",
                 "shares_raw": shares,
@@ -193,7 +203,9 @@ class PortfolioState(BaseState):
                 "cost_basis_reliable": cost_basis_reliable,
                 "allocation": f"{allocation:.2f}%",
                 "allocation_raw": allocation,
-                "raw_equity": val
+                "raw_equity": val,
+                "range_52w_raw": range_52w,
+                "range_52w": f"{range_52w:.0f}%" if range_52w is not None else "N/A",
             })
         
         # Dynamic sorting based on state
@@ -460,6 +472,99 @@ class PortfolioState(BaseState):
         ))
         fig.update_layout(margin=dict(t=0, l=0, r=0, b=0), template="plotly_dark", height=300)
         return fig
+
+    @rx.var
+    def sector_exposure_chart(self) -> go.Figure:
+        """Donut chart showing sector allocation for individual stocks.
+        
+        Uses Morningstar-inspired color scheme:
+        - Cyclical sectors (Consumer Discretionary, Financials, Real Estate): Orange tones
+        - Sensitive sectors (Communication, Energy, Industrials, Technology): Blue tones
+        - Defensive sectors (Consumer Staples, Healthcare, Utilities): Green tones
+        
+        Shows top 6 sectors, groups remainder as "Other" for readability.
+        """
+        acc_num = self.account_map.get(self.selected_account)
+        if not acc_num or acc_num not in self.sector_data:
+            return go.Figure()
+        
+        sector_values = self.sector_data.get(acc_num, {})
+        if not sector_values:
+            return go.Figure()
+        
+        # Sort by value descending
+        sorted_sectors = sorted(sector_values.items(), key=lambda x: x[1], reverse=True)
+        
+        # Take top 6, group rest as "Other"
+        top_sectors = sorted_sectors[:6]
+        other_value = sum(v for _, v in sorted_sectors[6:])
+        
+        labels = [s[0] for s in top_sectors]
+        values = [s[1] for s in top_sectors]
+        
+        if other_value > 0:
+            labels.append("Other")
+            values.append(other_value)
+        
+        # Morningstar-inspired sector color mapping
+        sector_colors = {
+            # Cyclical - Orange tones
+            "Consumer Cyclical": "#EF7622",
+            "Consumer Discretionary": "#EF7622",
+            "Financial Services": "#F59E0B",
+            "Financials": "#F59E0B",
+            "Real Estate": "#D97706",
+            "Basic Materials": "#B45309",
+            "Materials": "#B45309",
+            # Sensitive - Blue tones
+            "Technology": "#1F55A5",
+            "Information Technology": "#1F55A5",
+            "Communication Services": "#3B82F6",
+            "Energy": "#0EA5E9",
+            "Industrials": "#6366F1",
+            # Defensive - Green tones
+            "Healthcare": "#518428",
+            "Consumer Defensive": "#22C55E",
+            "Consumer Staples": "#22C55E",
+            "Utilities": "#10B981",
+            # Fallback
+            "Other": "#6B7280",
+        }
+        
+        colors = [sector_colors.get(label, "#6B7280") for label in labels]
+        
+        # Calculate total for center text
+        total = sum(values)
+        
+        fig = go.Figure(go.Pie(
+            labels=labels,
+            values=values,
+            hole=0.5,
+            marker=dict(colors=colors),
+            textinfo="label+percent",
+            textposition="outside",
+            hovertemplate="<b>%{label}</b><br>$%{value:,.0f}<br>%{percent}<extra></extra>",
+        ))
+        
+        fig.update_layout(
+            template="plotly_dark",
+            paper_bgcolor="rgba(0,0,0,0)",
+            plot_bgcolor="rgba(0,0,0,0)",
+            height=280,
+            margin=dict(t=20, l=20, r=20, b=20),
+            showlegend=False,
+            annotations=[
+                dict(
+                    text=f"${total:,.0f}" if not self.hide_portfolio_values else "*****",
+                    x=0.5, y=0.5,
+                    font_size=16,
+                    font_color="white",
+                    showarrow=False,
+                )
+            ],
+        )
+        
+        return fig
     
     async def setup_portfolio_page(self):
         """Setup portfolio page - validate session and fetch data if logged in."""
@@ -673,6 +778,85 @@ class PortfolioState(BaseState):
             print(f"Error fetching S&P 500 data: {e}")
             return 0.0
 
+    async def _fetch_sector_and_range_data(self, all_stocks: dict) -> tuple[dict, dict]:
+        """Fetch sector and 52-week range data for all stock holdings.
+        
+        Returns (sector_data, range_52w_data) where:
+        - sector_data: {account_num: {sector: total_value}}
+        - range_52w_data: {symbol: range_pct}
+        
+        Only fetches data for individual stocks (excludes index funds/ETFs).
+        """
+        # Collect unique symbols across all accounts (individual stocks only)
+        all_symbols = set()
+        for acc_stocks in all_stocks.values():
+            for stock in acc_stocks:
+                symbol = stock.get("symbol", "")
+                if symbol and not is_index_fund(symbol):
+                    all_symbols.add(symbol)
+        
+        if not all_symbols:
+            return {}, {}
+        
+        # Check cache
+        cache_key = f"sector_range_data:{','.join(sorted(all_symbols))}"
+        cached = get_cached(cache_key)
+        if cached:
+            return cached["sector_data"], cached["range_data"]
+        
+        # Fetch ticker info for all symbols in parallel
+        symbol_info = {}
+        
+        async def fetch_info(symbol: str):
+            try:
+                ticker = yf.Ticker(symbol)
+                info = await asyncio.to_thread(lambda: ticker.info)
+                return symbol, info
+            except Exception as e:
+                print(f"Error fetching info for {symbol}: {e}")
+                return symbol, {}
+        
+        tasks = [fetch_info(s) for s in all_symbols]
+        results = await asyncio.gather(*tasks)
+        
+        for symbol, info in results:
+            symbol_info[symbol] = info
+        
+        # Build range_52w_data from fetched info
+        range_52w_data = {}
+        for symbol, info in symbol_info.items():
+            current = info.get("currentPrice") or info.get("regularMarketPrice")
+            high_52 = info.get("fiftyTwoWeekHigh")
+            low_52 = info.get("fiftyTwoWeekLow")
+            
+            if current and high_52 and low_52 and high_52 > low_52:
+                range_pct = ((current - low_52) / (high_52 - low_52)) * 100
+                range_52w_data[symbol] = float(range_pct)
+        
+        # Build sector_data per account
+        sector_data = {}
+        for acc_num, acc_stocks in all_stocks.items():
+            acc_sectors = {}
+            for stock in acc_stocks:
+                symbol = stock.get("symbol", "")
+                if not symbol or is_index_fund(symbol):
+                    continue
+                
+                info = symbol_info.get(symbol, {})
+                sector = info.get("sector", "Unknown")
+                value = float(stock.get("raw_equity", 0))
+                
+                if sector not in acc_sectors:
+                    acc_sectors[sector] = 0
+                acc_sectors[sector] += value
+            
+            sector_data[acc_num] = acc_sectors
+        
+        # Cache results
+        set_cached(cache_key, {"sector_data": sector_data, "range_data": range_52w_data}, MARKET_DATA_TTL)
+        
+        return sector_data, range_52w_data
+
     @rx.event(background=True)
     async def fetch_all_portfolio_data(self):
         async with self:
@@ -688,6 +872,8 @@ class PortfolioState(BaseState):
                     self.all_options_holdings = cached_data["all_options_holdings"]
                     self.metric_data = cached_data["metric_data"]
                     self.sp500_daily_change_pct = cached_data.get("sp500_daily_pct", 0.0)
+                    self.sector_data = cached_data.get("sector_data", {})
+                    self.range_52w_data = cached_data.get("range_52w_data", {})
                     if not self.selected_account and self.account_names:
                         self.selected_account = self.account_names[0]
                     if self.selected_account:
@@ -759,12 +945,17 @@ class PortfolioState(BaseState):
                     "equity_prev_close": result["equity_prev_close"],
                 }
 
+            # Fetch sector and 52-week range data for individual stocks
+            sector_data, range_52w_data = await self._fetch_sector_and_range_data(all_stocks)
+
             # Update state once with all data
             async with self:
                 self.all_stock_holdings = all_stocks
                 self.all_options_holdings = all_options
                 self.metric_data = all_metrics
                 self.sp500_daily_change_pct = sp500_pct
+                self.sector_data = sector_data
+                self.range_52w_data = range_52w_data
                 
                 if self.selected_account:
                     acc_num = self.account_map.get(self.selected_account)
@@ -781,6 +972,8 @@ class PortfolioState(BaseState):
                 "all_options_holdings": all_options,
                 "metric_data": all_metrics,
                 "sp500_daily_pct": sp500_pct,
+                "sector_data": sector_data,
+                "range_52w_data": range_52w_data,
             }, PORTFOLIO_TTL)
 
             return rx.toast.success("Portfolio Updated")

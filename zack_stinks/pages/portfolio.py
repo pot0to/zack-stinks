@@ -136,17 +136,49 @@ def _stats_header() -> rx.Component:
 
 
 def _allocation_view() -> rx.Component:
-    """Asset allocation treemap."""
+    """Asset allocation treemap and sector exposure charts in a tabbed layout."""
     return rx.card(
-        rx.vstack(
-            rx.hstack(
-                rx.icon("pie-chart", size=18),
-                rx.text("Asset Allocation", weight="bold", size="3"),
-                spacing="2",
-                align_items="center",
-                margin_bottom="1em",
+        rx.tabs.root(
+            rx.tabs.list(
+                rx.tabs.trigger("Asset Allocation", value="treemap_tab"),
+                rx.tabs.trigger("Sector Exposure", value="sector_tab"),
             ),
-            rx.plotly(data=PortfolioState.portfolio_treemap, width="100%", height="400px"),
+            rx.tabs.content(
+                rx.vstack(
+                    rx.plotly(data=PortfolioState.portfolio_treemap, width="100%", height="350px"),
+                    width="100%",
+                    padding_top="1em",
+                ),
+                value="treemap_tab",
+            ),
+            rx.tabs.content(
+                rx.vstack(
+                    rx.hstack(
+                        rx.popover.root(
+                            rx.popover.trigger(
+                                rx.icon("info", size=14, color="gray", cursor="pointer"),
+                            ),
+                            rx.popover.content(
+                                rx.text(
+                                    "Sector breakdown for individual stocks only. "
+                                    "Index funds and ETFs are excluded since they provide diversified exposure.",
+                                    size="2",
+                                ),
+                                side="top",
+                                max_width="280px",
+                            ),
+                        ),
+                        rx.text("Individual stocks only", size="1", color="gray"),
+                        spacing="1",
+                        align="center",
+                    ),
+                    rx.plotly(data=PortfolioState.sector_exposure_chart, width="100%", height="320px"),
+                    width="100%",
+                    padding_top="1em",
+                ),
+                value="sector_tab",
+            ),
+            default_value="treemap_tab",
             width="100%",
         ),
         width="100%",
@@ -186,6 +218,29 @@ def _stock_table_header() -> rx.Component:
             _sortable_stock_header("Avg Cost", "avg_cost_raw"),
             _sortable_stock_header("P/L ($)", "pl_raw"),
             _sortable_stock_header("P/L (%)", "pl_pct_raw"),
+            # 52W Range with tooltip explaining color coding
+            rx.table.column_header_cell(
+                rx.hstack(
+                    rx.text("52W Range"),
+                    rx.popover.root(
+                        rx.popover.trigger(
+                            rx.icon("info", size=12, color="gray", cursor="pointer"),
+                        ),
+                        rx.popover.content(
+                            rx.text(
+                                "Position within 52-week trading range. "
+                                "Green (>70%) = near highs, Blue (30-70%) = mid-range, "
+                                "Red (<30%) = near lows.",
+                                size="2",
+                            ),
+                            side="top",
+                            max_width="260px",
+                        ),
+                    ),
+                    spacing="1",
+                    align="center",
+                ),
+            ),
             _sortable_stock_header("Portfolio %", "allocation_raw"),
         ),
     )
@@ -264,14 +319,37 @@ def _stock_row(h: dict) -> rx.Component:
             )
         ),
         rx.table.cell(
-            rx.text(
-                rx.cond(State.hide_portfolio_values, MASK_DOLLAR, h["pl_formatted"]),
-                color=rx.cond(
-                    State.hide_portfolio_values,
-                    "gray",
-                    rx.cond(h["cost_basis_reliable"], rx.cond(h["pl_positive"], "green", "red"), "gray")
+            rx.hstack(
+                rx.text(
+                    rx.cond(State.hide_portfolio_values, MASK_DOLLAR, h["pl_formatted"]),
+                    color=rx.cond(
+                        State.hide_portfolio_values,
+                        "gray",
+                        rx.cond(h["cost_basis_reliable"], rx.cond(h["pl_positive"], "green", "red"), "gray")
+                    ),
+                    weight="medium",
                 ),
-                weight="medium",
+                # Info icon for N/A cost basis with tooltip explanation
+                rx.cond(
+                    h["cost_basis_reliable"],
+                    rx.fragment(),
+                    rx.popover.root(
+                        rx.popover.trigger(
+                            rx.icon("info", size=14, color="slate", cursor="pointer"),
+                        ),
+                        rx.popover.content(
+                            rx.text(
+                                "Cost basis unavailable. This can happen with transferred positions, "
+                                "corporate actions, or shares acquired before 2011.",
+                                size="2",
+                            ),
+                            side="top",
+                            max_width="280px",
+                        ),
+                    ),
+                ),
+                spacing="1",
+                align="center",
             )
         ),
         rx.table.cell(
@@ -285,7 +363,49 @@ def _stock_row(h: dict) -> rx.Component:
                 weight="medium",
             )
         ),
+        rx.table.cell(_range_52w_cell(h)),
         rx.table.cell(rx.cond(State.hide_portfolio_values, MASK_PERCENT, h["allocation"])),
+    )
+
+
+def _range_52w_cell(h: dict) -> rx.Component:
+    """52-week range cell with visual progress bar and percentage.
+    
+    Shows a horizontal bar indicating where the current price sits within
+    the 52-week trading range. 0% = at 52-week low, 100% = at 52-week high.
+    """
+    # Cast to number for comparison operations
+    range_val = h["range_52w_raw"].to(int)
+    
+    return rx.cond(
+        h["range_52w_raw"] != None,
+        rx.vstack(
+            rx.box(
+                rx.box(
+                    width=h["range_52w"],
+                    height="100%",
+                    background=rx.cond(
+                        range_val > 70,
+                        "rgb(34, 197, 94)",  # Green for strong momentum
+                        rx.cond(
+                            range_val < 30,
+                            "rgb(239, 68, 68)",  # Red for weakness
+                            "rgb(59, 130, 246)",  # Blue for neutral
+                        ),
+                    ),
+                    border_radius="2px",
+                ),
+                width="60px",
+                height="6px",
+                background=rx.color("gray", 5),
+                border_radius="2px",
+                overflow="hidden",
+            ),
+            rx.text(h["range_52w"], size="1", color="gray"),
+            spacing="1",
+            align="center",
+        ),
+        rx.text("N/A", size="2", color="gray"),
     )
 
 
