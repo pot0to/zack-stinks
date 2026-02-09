@@ -1,4 +1,4 @@
-# zack_stinks/utils/auth.py
+# stonks_board/utils/auth.py
 import json
 import os
 

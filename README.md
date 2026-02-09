@@ -1,4 +1,4 @@
-# Zack Stinks - Portfolio Dashboard
+# StonksBoard - Portfolio Dashboard
 
 A personal stock portfolio dashboard built with Reflex that integrates with Robinhood to display your holdings, track performance, and provide technical analysis tools.
 
@@ -12,8 +12,8 @@ A personal stock portfolio dashboard built with Reflex that integrates with Robi
 ## Project Structure
 
 ```
-zack_stinks/
-├── zack_stinks.py        # App entry point and route definitions
+stonks_board/
+├── stonks_board.py       # App entry point and route definitions
 ├── analyzer.py           # Market analysis logic
 ├── components/
 │   ├── __init__.py       # Component exports

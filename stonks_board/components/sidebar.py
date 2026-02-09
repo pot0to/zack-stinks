@@ -160,7 +160,7 @@ def sidebar() -> rx.Component:
                 rx.cond(
                     State.sidebar_open,
                     rx.text(
-                        "Zack Stinks",
+                        "StonksBoard",
                         font_size="1.25em",
                         weight="bold",
                         color=ACCENT_PRIMARY,

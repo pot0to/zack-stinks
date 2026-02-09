@@ -16,7 +16,7 @@ def login_page() -> rx.Component:
         rx.vstack(
             # Logo/Title
             rx.vstack(
-                rx.text("Zack Stinks", size="8", weight="bold", color=ACCENT_PRIMARY),
+                rx.text("StonksBoard", size="8", weight="bold", color=ACCENT_PRIMARY),
                 rx.text("Portfolio Dashboard", size="3", color="gray"),
                 spacing="1",
                 align="center",
