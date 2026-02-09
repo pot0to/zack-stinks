@@ -27,9 +27,11 @@ def _login_required_view() -> rx.Component:
                 text_align="center",
                 max_width="400px",
             ),
-            rx.link(
-                rx.button("Sign In", size="3", variant="solid"),
-                href="/login",
+            rx.button(
+                "Sign In",
+                size="3",
+                variant="solid",
+                on_click=State.navigate_to_login("/portfolio"),
             ),
             spacing="4",
             align="center",

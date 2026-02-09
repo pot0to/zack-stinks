@@ -47,9 +47,11 @@ def _portfolio_spotlight() -> rx.Component:
                 color="gray",
                 text_align="center",
             ),
-            rx.link(
-                rx.button("Sign In", variant="outline", size="2"),
-                href="/login",
+            rx.button(
+                "Sign In",
+                variant="outline",
+                size="2",
+                on_click=State.navigate_to_login("/"),
             ),
             spacing="2",
             align="center",

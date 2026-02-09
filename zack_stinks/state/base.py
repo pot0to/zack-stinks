@@ -20,6 +20,7 @@ class BaseState(rx.State):
     mfa_input: str = ""
     login_error: str = ""
     show_mfa_input: bool = False
+    redirect_after_login: str = "/"  # Track where to redirect after successful login
 
     def toggle_sidebar(self):
         self.sidebar_open = not self.sidebar_open
@@ -38,6 +39,11 @@ class BaseState(rx.State):
     def set_mfa_input(self, value: str):
         self.mfa_input = value
         self.login_error = ""
+    
+    def navigate_to_login(self, from_page: str = "/"):
+        """Set the redirect destination and navigate to login page."""
+        self.redirect_after_login = from_page
+        return rx.redirect("/login")
 
     async def validate_existing_session(self) -> bool:
         """Check if an existing robin_stocks pickle session is still valid.
@@ -105,7 +111,9 @@ class BaseState(rx.State):
         
         if success:
             self.login_username = ""
-            yield rx.redirect("/")
+            redirect_to = self.redirect_after_login or "/"
+            self.redirect_after_login = "/"  # Reset for next time
+            yield rx.redirect(redirect_to)
         else:
             self.login_error = error or "Login failed."
         
@@ -126,7 +134,9 @@ class BaseState(rx.State):
         success, error = await self._perform_login(creds["username"], creds["password"])
         
         if success:
-            yield rx.redirect("/")
+            redirect_to = self.redirect_after_login or "/"
+            self.redirect_after_login = "/"  # Reset for next time
+            yield rx.redirect(redirect_to)
         else:
             self.login_error = error or "Login failed using credentials.json."
         
