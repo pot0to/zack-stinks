@@ -306,7 +306,10 @@ class PortfolioState(BaseState):
             strike = float(item.get("strike_price", 0))
             option_type = item.get("option_type", "")
             dte = int(item.get("dte", 0))
-            delta = float(item.get("delta", 0))
+            raw_delta = float(item.get("delta", 0))
+            # Position delta: negate for short positions to reflect actual directional exposure
+            # Short call = negative delta (bearish), Short put = positive delta (bullish)
+            delta = -raw_delta if is_short else raw_delta
             underlying = float(item.get("underlying_price", 0))
             cost_basis = float(item.get("cost_basis", 0))
             current_value = float(item.get("current_value", 0))
@@ -1528,7 +1531,10 @@ class PortfolioState(BaseState):
                     strike = float(item.get("strike_price", 0))
                     option_type = item.get("option_type", "")
                     dte = int(item.get("dte", 0))
-                    delta = float(item.get("delta", 0))
+                    raw_delta = float(item.get("delta", 0))
+                    # Position delta: negate for short positions to reflect actual directional exposure
+                    # Short call = negative delta (bearish), Short put = positive delta (bullish)
+                    delta = -raw_delta if is_short else raw_delta
                     underlying = float(item.get("underlying_price", 0))
                     cost_basis = float(item.get("cost_basis", 0))
                     current_value = float(item.get("current_value", 0))
