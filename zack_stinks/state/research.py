@@ -353,8 +353,8 @@ class ResearchState(BaseState):
         Layout: 55% price, 15% volume, 15% RSI, 15% MACD
         
         The chart always renders all 4 rows to maintain consistent dimensions.
-        In Phase 1, RSI and MACD rows show skeleton reference lines only.
-        In Phase 2, the actual indicator traces are added.
+        In Phase 1, RSI and MACD rows show loading placeholders only.
+        In Phase 2, reference lines and actual indicator traces are added.
         
         Args:
             hist: OHLCV DataFrame for the display period
@@ -365,7 +365,7 @@ class ResearchState(BaseState):
             macd_line: MACD line values (Phase 2 only)
             signal_line: MACD signal line values (Phase 2 only)
             histogram: MACD histogram values (Phase 2 only)
-            phase: 1 for skeleton indicators, 2 for full indicators
+            phase: 1 for loading placeholders, 2 for full indicators
         """
         
         # Resample to weekly if requested
@@ -451,13 +451,20 @@ class ResearchState(BaseState):
         )
 
         # Row 3: RSI
-        # Always add reference lines (visible in both phases)
-        fig.add_hline(y=70, line_dash="dot", line_color="rgba(239, 68, 68, 0.5)", row=3, col=1)
-        fig.add_hline(y=30, line_dash="dot", line_color="rgba(34, 197, 94, 0.5)", row=3, col=1)
-        fig.add_hline(y=50, line_dash="dot", line_color="rgba(255, 255, 255, 0.2)", row=3, col=1)
-        
         if phase == 1:
-            # Phase 1: Add loading annotation centered in RSI subplot
+            # Phase 1: Add invisible placeholder trace to establish subplot domain,
+            # then show loading annotation
+            fig.add_trace(
+                go.Scatter(
+                    x=[hist.index[0], hist.index[-1]] if len(hist) > 0 else [0, 1],
+                    y=[50, 50],
+                    mode='markers',
+                    marker=dict(opacity=0),
+                    showlegend=False,
+                    hoverinfo='skip',
+                ),
+                row=3, col=1
+            )
             fig.add_annotation(
                 text="Loading RSI...",
                 xref="x3 domain", yref="y3 domain",
@@ -466,25 +473,38 @@ class ResearchState(BaseState):
                 font=dict(color="rgba(255, 255, 255, 0.4)", size=12),
                 xanchor="center", yanchor="middle",
             )
-        elif rsi_series is not None and not rsi_series.dropna().empty:
-            # Phase 2: Add actual RSI trace
-            fig.add_trace(
-                go.Scatter(
-                    x=rsi_series.index,
-                    y=rsi_series,
-                    name="RSI",
-                    line=dict(color='rgb(168, 85, 247)', width=1.5),
-                    showlegend=False,
-                ),
-                row=3, col=1
-            )
+        else:
+            # Phase 2: Add reference lines and actual RSI trace
+            fig.add_hline(y=70, line_dash="dot", line_color="rgba(239, 68, 68, 0.5)", row=3, col=1)
+            fig.add_hline(y=30, line_dash="dot", line_color="rgba(34, 197, 94, 0.5)", row=3, col=1)
+            fig.add_hline(y=50, line_dash="dot", line_color="rgba(255, 255, 255, 0.2)", row=3, col=1)
+            if rsi_series is not None and not rsi_series.dropna().empty:
+                fig.add_trace(
+                    go.Scatter(
+                        x=rsi_series.index,
+                        y=rsi_series,
+                        name="RSI",
+                        line=dict(color='rgb(168, 85, 247)', width=1.5),
+                        showlegend=False,
+                    ),
+                    row=3, col=1
+                )
 
         # Row 4: MACD
-        # Always add zero reference line (visible in both phases)
-        fig.add_hline(y=0, line_dash="dot", line_color="rgba(255, 255, 255, 0.3)", row=4, col=1)
-        
         if phase == 1:
-            # Phase 1: Add loading annotation centered in MACD subplot
+            # Phase 1: Add invisible placeholder trace to establish subplot domain,
+            # then show loading annotation
+            fig.add_trace(
+                go.Scatter(
+                    x=[hist.index[0], hist.index[-1]] if len(hist) > 0 else [0, 1],
+                    y=[0, 0],
+                    mode='markers',
+                    marker=dict(opacity=0),
+                    showlegend=False,
+                    hoverinfo='skip',
+                ),
+                row=4, col=1
+            )
             fig.add_annotation(
                 text="Loading MACD...",
                 xref="x4 domain", yref="y4 domain",
@@ -494,7 +514,8 @@ class ResearchState(BaseState):
                 xanchor="center", yanchor="middle",
             )
         else:
-            # Phase 2: Add actual MACD traces
+            # Phase 2: Add zero reference line and actual MACD traces
+            fig.add_hline(y=0, line_dash="dot", line_color="rgba(255, 255, 255, 0.3)", row=4, col=1)
             if macd_line is not None and not macd_line.dropna().empty:
                 fig.add_trace(
                     go.Scatter(

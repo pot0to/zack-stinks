@@ -111,7 +111,7 @@ def skeleton_donut_chart() -> rx.Component:
             class_name="skeleton-pulse",
         ),
         width="100%",
-        height="280px",
+        height="350px",  # Match sector exposure chart height
     )
 
 
@@ -139,4 +139,30 @@ def inline_spinner(text: str = "Loading...") -> rx.Component:
         rx.text(text, size="1", color="gray"),
         spacing="2",
         align="center",
+    )
+
+
+def skeleton_line_chart(height: str = "400px") -> rx.Component:
+    """Skeleton placeholder for line/area charts like market momentum.
+    
+    Shows horizontal grid lines with pulse animation to indicate loading.
+    """
+    return rx.box(
+        rx.vstack(
+            # Simulated horizontal grid lines
+            rx.box(width="100%", height="1px", background=rx.color("gray", 5)),
+            rx.box(width="100%", height="1px", background=rx.color("gray", 5)),
+            rx.box(width="100%", height="1px", background=rx.color("gray", 5)),
+            rx.box(width="100%", height="1px", background=rx.color("gray", 5)),
+            spacing="6",
+            width="100%",
+            height="100%",
+            justify="between",
+            padding="2em",
+        ),
+        width="100%",
+        height=height,
+        background=rx.color("gray", 2),
+        border_radius="8px",
+        class_name="skeleton-pulse",
     )

@@ -11,6 +11,7 @@ from ..utils.technical import batch_fetch_earnings_async
 class MarketState(BaseState):
     market_data: dict[str, dict[str, str]] = {}
     trend_fig: go.Figure = go.Figure()
+    trend_data_loading: bool = True  # Start true to show skeleton on initial load
     gap_events: list[dict] = []
     ma_proximity_events: list[dict] = []
     below_ma_200_events: list[dict] = []
@@ -274,6 +275,7 @@ class MarketState(BaseState):
         cached = get_cached("trend_chart")
         if cached:
             self.trend_fig = cached
+            self.trend_data_loading = False
             return
         
         analyzer = StockAnalyzer()
@@ -355,4 +357,5 @@ class MarketState(BaseState):
         )
 
         self.trend_fig = fig
+        self.trend_data_loading = False
         set_cached("trend_chart", fig, MARKET_DATA_TTL)

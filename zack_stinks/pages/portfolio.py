@@ -193,10 +193,27 @@ def _allocation_view() -> rx.Component:
                 rx.tabs.trigger("Delta Exposure", value="delta_tab"),
             ),
             rx.tabs.content(
-                rx.vstack(
-                    rx.plotly(data=PortfolioState.portfolio_treemap, width="100%", height="350px"),
-                    width="100%",
-                    padding_top="1em",
+                rx.cond(
+                    PortfolioState.selected_account_stock_holdings.length() > 0,
+                    rx.vstack(
+                        rx.plotly(data=PortfolioState.portfolio_treemap, width="100%", height="350px"),
+                        width="100%",
+                        padding_top="1em",
+                    ),
+                    rx.center(
+                        rx.vstack(
+                            rx.text("No positions to display", color="gray", size="2"),
+                            rx.text(
+                                "Stock and options positions will appear here once you have holdings.",
+                                color="gray",
+                                size="1",
+                            ),
+                            spacing="1",
+                            align="center",
+                        ),
+                        padding="2em",
+                        width="100%",
+                    ),
                 ),
                 value="treemap_tab",
             ),
@@ -221,16 +238,38 @@ def _allocation_view() -> rx.Component:
                         spacing="1",
                         align="center",
                     ),
-                    # Show skeleton while analyzing, then actual chart
-                    rx.cond(
-                        PortfolioState.is_analyzing,
-                        rx.vstack(
-                            skeleton_donut_chart(),
-                            inline_spinner("Loading sector data..."),
-                            spacing="2",
-                            width="100%",
+                    # Fixed-height container prevents layout shift during transitions
+                    rx.box(
+                        rx.cond(
+                            PortfolioState.is_analyzing,
+                            rx.vstack(
+                                skeleton_donut_chart(),
+                                inline_spinner("Loading sector data..."),
+                                spacing="2",
+                                width="100%",
+                            ),
+                            rx.cond(
+                                PortfolioState.selected_account_individual_stock_holdings.length() > 0,
+                                rx.plotly(data=PortfolioState.sector_exposure_chart, width="100%", height="350px"),
+                                rx.center(
+                                    rx.vstack(
+                                        rx.text("No individual stocks", color="gray", size="2"),
+                                        rx.text(
+                                            "Sector breakdown requires individual stock positions.",
+                                            color="gray",
+                                            size="1",
+                                        ),
+                                        spacing="1",
+                                        align="center",
+                                    ),
+                                    padding="2em",
+                                    width="100%",
+                                    height="350px",
+                                ),
+                            ),
                         ),
-                        rx.plotly(data=PortfolioState.sector_exposure_chart, width="100%", height="320px"),
+                        min_height="350px",
+                        width="100%",
                     ),
                     width="100%",
                     padding_top="1em",
@@ -241,7 +280,8 @@ def _allocation_view() -> rx.Component:
                 _delta_exposure_content(),
                 value="delta_tab",
             ),
-            default_value="treemap_tab",
+            value=PortfolioState.allocation_tab,
+            on_change=PortfolioState.set_allocation_tab,
             width="100%",
         ),
         width="100%",
@@ -320,6 +360,7 @@ def _delta_exposure_content() -> rx.Component:
                     align="center",
                 ),
                 padding="2em",
+                width="100%",
             ),
             rx.fragment(),
         ),
@@ -516,6 +557,25 @@ def _stock_holdings_table() -> rx.Component:
             ),
             rx.fragment(),
         ),
+        # Empty state when no stock positions exist
+        rx.cond(
+            PortfolioState.selected_account_stock_holdings.length() == 0,
+            rx.center(
+                rx.vstack(
+                    rx.text("No stock positions", color="gray", size="2"),
+                    rx.text(
+                        "Stock holdings will appear here when you have open positions.",
+                        color="gray",
+                        size="1",
+                    ),
+                    spacing="1",
+                    align="center",
+                ),
+                padding="2em",
+                width="100%",
+            ),
+            rx.fragment(),
+        ),
         width="100%",
     )
 
@@ -575,21 +635,10 @@ def _stock_row(h: dict) -> rx.Component:
         rx.table.cell(rx.cond(State.hide_portfolio_values, MASK_SHARES, h["shares"])),
         rx.table.cell(rx.cond(State.hide_portfolio_values, MASK_DOLLAR, h["value"])),
         rx.table.cell(
-            rx.text(
-                rx.cond(State.hide_portfolio_values, MASK_DOLLAR, h["avg_cost"]),
-                color=rx.cond(h["cost_basis_reliable"], "inherit", "gray")
-            )
-        ),
-        rx.table.cell(
             rx.hstack(
                 rx.text(
-                    rx.cond(State.hide_portfolio_values, MASK_DOLLAR, h["pl_formatted"]),
-                    color=rx.cond(
-                        State.hide_portfolio_values,
-                        "gray",
-                        rx.cond(h["cost_basis_reliable"], rx.cond(h["pl_positive"], "green", "red"), "gray")
-                    ),
-                    weight="medium",
+                    rx.cond(State.hide_portfolio_values, MASK_DOLLAR, h["avg_cost"]),
+                    color=rx.cond(h["cost_basis_reliable"], "inherit", "gray")
                 ),
                 # Info icon for N/A cost basis with tooltip explanation
                 rx.cond(
@@ -612,6 +661,17 @@ def _stock_row(h: dict) -> rx.Component:
                 ),
                 spacing="1",
                 align="center",
+            )
+        ),
+        rx.table.cell(
+            rx.text(
+                rx.cond(State.hide_portfolio_values, MASK_DOLLAR, h["pl_formatted"]),
+                color=rx.cond(
+                    State.hide_portfolio_values,
+                    "gray",
+                    rx.cond(h["cost_basis_reliable"], rx.cond(h["pl_positive"], "green", "red"), "gray")
+                ),
+                weight="medium",
             )
         ),
         rx.table.cell(
@@ -771,6 +831,25 @@ def _options_holdings_table() -> rx.Component:
             ),
             rx.fragment(),
         ),
+        # Empty state when no options positions exist
+        rx.cond(
+            PortfolioState.selected_account_option_holdings.length() == 0,
+            rx.center(
+                rx.vstack(
+                    rx.text("No options positions", color="gray", size="2"),
+                    rx.text(
+                        "Options contracts will appear here when you have open positions.",
+                        color="gray",
+                        size="1",
+                    ),
+                    spacing="1",
+                    align="center",
+                ),
+                padding="2em",
+                width="100%",
+            ),
+            rx.fragment(),
+        ),
         width="100%",
     )
 
@@ -832,7 +911,8 @@ def _holdings_section() -> rx.Component:
         ),
         rx.tabs.content(_options_holdings_table(), value="options_tab"),
         rx.tabs.content(_stock_holdings_table(), value="stocks_tab"),
-        default_value="options_tab",
+        value=PortfolioState.holdings_tab,
+        on_change=PortfolioState.set_holdings_tab,
         width="100%",
     )
 

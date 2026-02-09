@@ -1,7 +1,7 @@
 """Market Overview page UI."""
 import reflex as rx
 from ..components.layout import page_layout
-from ..components.skeleton import skeleton_table_rows, inline_spinner
+from ..components.skeleton import skeleton_table_rows, inline_spinner, skeleton_line_chart
 from ..state import MarketState, State
 from ..styles.constants import MASK_ACCOUNTS
 
@@ -24,7 +24,11 @@ def _market_content() -> rx.Component:
         rx.card(
             rx.vstack(
                 rx.text("Market Momentum", weight="bold", size="4"),
-                rx.plotly(data=MarketState.trend_fig, width="100%"),
+                rx.cond(
+                    MarketState.trend_data_loading,
+                    skeleton_line_chart(height="400px"),
+                    rx.plotly(data=MarketState.trend_fig, width="100%", height="400px"),
+                ),
             ),
             width="100%",
             margin_top="2em",

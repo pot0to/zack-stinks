@@ -26,14 +26,39 @@ def _research_content() -> rx.Component:
             _search_controls(),
             # Tab navigation and stats
             _tabbed_stats(),
-            # Chart
-            rx.box(
-                rx.plotly(data=ResearchState.price_chart, style={"width": "100%", "height": "100%"}),
-                width="100%",
-                background=rx.color("gray", 2),
-                border_radius="12px",
-                border=f"1px solid {rx.color('gray', 4)}",
-                padding="1em",
+            # Chart (conditionally rendered based on data availability)
+            rx.cond(
+                ResearchState.phase1_complete,
+                # Show chart once data is loaded
+                rx.box(
+                    rx.plotly(data=ResearchState.price_chart, style={"width": "100%", "height": "100%"}),
+                    width="100%",
+                    background=rx.color("gray", 2),
+                    border_radius="12px",
+                    border=f"1px solid {rx.color('gray', 4)}",
+                    padding="1em",
+                ),
+                # Show placeholder before first search
+                rx.box(
+                    rx.center(
+                        rx.vstack(
+                            rx.icon("chart-candlestick", size=48, color=rx.color("gray", 6)),
+                            rx.text(
+                                "Enter a ticker symbol and click Search",
+                                color=rx.color("gray", 9),
+                                size="3",
+                            ),
+                            spacing="3",
+                            align="center",
+                        ),
+                        height="700px",
+                    ),
+                    width="100%",
+                    background=rx.color("gray", 2),
+                    border_radius="12px",
+                    border=f"1px solid {rx.color('gray', 4)}",
+                    padding="1em",
+                ),
             ),
             spacing="5",
             width="100%",

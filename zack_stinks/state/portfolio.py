@@ -137,6 +137,18 @@ class PortfolioState(BaseState):
     options_sort_column: str = "dte_raw"
     options_sort_ascending: bool = True
     
+    # Tab selection state (persists across account switches)
+    allocation_tab: str = "treemap_tab"
+    holdings_tab: str = "options_tab"
+    
+    def set_allocation_tab(self, tab: str):
+        """Update the selected allocation tab."""
+        self.allocation_tab = tab
+    
+    def set_holdings_tab(self, tab: str):
+        """Update the selected holdings tab."""
+        self.holdings_tab = tab
+    
     def set_stock_sort(self, column: str):
         """Toggle sort direction if same column, otherwise set new column ascending.
         
@@ -543,6 +555,12 @@ class PortfolioState(BaseState):
         colors = [sector_colors.get(label, "#6B7280") for label in labels]
         total = sum(values)
         
+        # Mask dollar values in hover text when privacy mode is enabled
+        if self.hide_portfolio_values:
+            hover_template = "<b>%{label}</b><br>*****<br>%{percent}<extra></extra>"
+        else:
+            hover_template = "<b>%{label}</b><br>$%{value:,.0f}<br>%{percent}<extra></extra>"
+        
         fig = go.Figure(go.Pie(
             labels=labels,
             values=values,
@@ -550,15 +568,16 @@ class PortfolioState(BaseState):
             marker=dict(colors=colors),
             textinfo="label+percent",
             textposition="outside",
-            hovertemplate="<b>%{label}</b><br>$%{value:,.0f}<br>%{percent}<extra></extra>",
+            automargin=False,  # Prevent chart from resizing on re-render
+            hovertemplate=hover_template,
         ))
         
         fig.update_layout(
             template="plotly_dark",
             paper_bgcolor="rgba(0,0,0,0)",
             plot_bgcolor="rgba(0,0,0,0)",
-            height=280,
-            margin=dict(t=20, l=20, r=20, b=20),
+            height=350,
+            margin=dict(t=70, l=80, r=80, b=70),  # Larger margins for outside labels
             showlegend=False,
             annotations=[
                 dict(
