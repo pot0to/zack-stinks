@@ -136,12 +136,13 @@ def _stats_header() -> rx.Component:
 
 
 def _allocation_view() -> rx.Component:
-    """Asset allocation treemap and sector exposure charts in a tabbed layout."""
+    """Asset allocation treemap, sector exposure, and delta exposure in a tabbed layout."""
     return rx.card(
         rx.tabs.root(
             rx.tabs.list(
                 rx.tabs.trigger("Asset Allocation", value="treemap_tab"),
                 rx.tabs.trigger("Sector Exposure", value="sector_tab"),
+                rx.tabs.trigger("Delta Exposure", value="delta_tab"),
             ),
             rx.tabs.content(
                 rx.vstack(
@@ -178,11 +179,171 @@ def _allocation_view() -> rx.Component:
                 ),
                 value="sector_tab",
             ),
+            rx.tabs.content(
+                _delta_exposure_content(),
+                value="delta_tab",
+            ),
             default_value="treemap_tab",
             width="100%",
         ),
         width="100%",
         margin_top="1.5em",
+    )
+
+
+def _delta_exposure_content() -> rx.Component:
+    """Delta exposure tab content showing per-ticker directional exposure for options positions."""
+    return rx.vstack(
+        rx.hstack(
+            rx.popover.root(
+                rx.popover.trigger(
+                    rx.icon("info", size=14, color="gray", cursor="pointer"),
+                ),
+                rx.popover.content(
+                    rx.text(
+                        "Shows tickers with open options positions and their net directional exposure. "
+                        "Stock-only positions are shown in the Asset Allocation treemap. "
+                        "Stock delta = 1 per share. Options delta = contracts × 100 × option delta. "
+                        "Positive (green) = bullish, negative (red) = bearish.",
+                        size="2",
+                    ),
+                    side="top",
+                    max_width="320px",
+                ),
+            ),
+            rx.text("Tickers with options positions", size="1", color="gray"),
+            spacing="1",
+            align="center",
+        ),
+        # Individual stocks section
+        rx.cond(
+            PortfolioState.selected_account_individual_delta_exposure.length() > 0,
+            rx.vstack(
+                rx.hstack(
+                    rx.icon("building-2", size=14, color="green"),
+                    rx.text("Individual Stocks", weight="medium", size="2"),
+                    spacing="2",
+                    align="center",
+                    margin_top="1em",
+                ),
+                _delta_exposure_table(PortfolioState.selected_account_individual_delta_exposure),
+                width="100%",
+            ),
+            rx.fragment(),
+        ),
+        # Index funds section
+        rx.cond(
+            PortfolioState.selected_account_index_fund_delta_exposure.length() > 0,
+            rx.vstack(
+                rx.hstack(
+                    rx.icon("layers", size=14, color="blue"),
+                    rx.text("Index Funds & ETFs", weight="medium", size="2"),
+                    spacing="2",
+                    align="center",
+                    margin_top="1.5em",
+                ),
+                _delta_exposure_table(PortfolioState.selected_account_index_fund_delta_exposure),
+                width="100%",
+            ),
+            rx.fragment(),
+        ),
+        # Empty state
+        rx.cond(
+            PortfolioState.selected_account_delta_exposure.length() == 0,
+            rx.center(
+                rx.vstack(
+                    rx.text("No open options positions", color="gray", size="2"),
+                    rx.text(
+                        "Stock-only positions are shown in the Asset Allocation tab.",
+                        color="gray",
+                        size="1",
+                    ),
+                    spacing="1",
+                    align="center",
+                ),
+                padding="2em",
+            ),
+            rx.fragment(),
+        ),
+        width="100%",
+        padding_top="1em",
+    )
+
+
+def _delta_exposure_table(data: list) -> rx.Component:
+    """Table showing per-ticker delta breakdown."""
+    return rx.table.root(
+        rx.table.header(
+            rx.table.row(
+                rx.table.column_header_cell("Symbol"),
+                rx.table.column_header_cell("Stock Δ"),
+                rx.table.column_header_cell("Options Δ"),
+                rx.table.column_header_cell("Net Δ"),
+                rx.table.column_header_cell(""),  # Bar column
+            ),
+        ),
+        rx.table.body(
+            rx.foreach(data, _delta_exposure_row),
+        ),
+        width="100%",
+        variant="surface",
+        size="1",
+    )
+
+
+def _delta_exposure_row(item: dict) -> rx.Component:
+    """Single row in delta exposure table."""
+    return rx.table.row(
+        rx.table.cell(rx.text(item["symbol"], weight="bold", size="2")),
+        rx.table.cell(
+            rx.text(
+                rx.cond(State.hide_portfolio_values, MASK_DELTA, item["stock_delta"]),
+                size="2",
+                color="gray",
+            )
+        ),
+        rx.table.cell(
+            rx.text(
+                rx.cond(State.hide_portfolio_values, MASK_DELTA, item["options_delta"]),
+                size="2",
+                color="gray",
+            )
+        ),
+        rx.table.cell(
+            rx.text(
+                rx.cond(State.hide_portfolio_values, MASK_DELTA, item["net_delta"]),
+                size="2",
+                weight="medium",
+                color=rx.cond(
+                    State.hide_portfolio_values,
+                    "gray",
+                    rx.cond(item["is_bullish"], "green", "red")
+                ),
+            )
+        ),
+        rx.table.cell(
+            rx.box(
+                rx.box(
+                    width=item["bar_width"],
+                    height="100%",
+                    background=rx.cond(
+                        State.hide_portfolio_values,
+                        rx.color("gray", 6),
+                        rx.cond(
+                            item["is_bullish"],
+                            "rgb(34, 197, 94)",  # Green
+                            "rgb(239, 68, 68)",  # Red
+                        ),
+                    ),
+                    border_radius="2px",
+                ),
+                width="80px",
+                height="8px",
+                background=rx.color("gray", 4),
+                border_radius="2px",
+                overflow="hidden",
+            ),
+        ),
     )
 
 

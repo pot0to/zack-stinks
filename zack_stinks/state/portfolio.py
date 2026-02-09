@@ -316,6 +316,118 @@ class PortfolioState(BaseState):
         return [h for h in self.selected_account_option_holdings if not is_index_fund(h["symbol"])]
     
     @rx.var
+    def selected_account_delta_exposure(self) -> list[dict]:
+        """Per-ticker aggregate delta exposure for tickers with open options positions.
+        
+        Only shows tickers that have options positions, since stock-only positions
+        are already visible in the treemap. This keeps the view focused on how
+        options modify directional exposure.
+        
+        Stock delta = shares × 1.0 (stocks have delta of 1 per share)
+        Options delta = contracts × 100 × option_delta
+        Net delta = stock_delta + options_delta
+        
+        Returns list sorted by absolute net delta (largest exposure first).
+        """
+        acc_num = self.account_map.get(self.selected_account)
+        if not acc_num:
+            return []
+        
+        raw_stocks = self.all_stock_holdings.get(acc_num, [])
+        raw_options = self.all_options_holdings.get(acc_num, [])
+        
+        # First, identify which symbols have options positions
+        symbols_with_options = set()
+        for option in raw_options:
+            symbol = option.get("symbol", "")
+            if symbol:
+                symbols_with_options.add(symbol)
+        
+        # Only process tickers that have options positions
+        if not symbols_with_options:
+            return []
+        
+        # Aggregate by symbol (only for tickers with options)
+        delta_by_symbol: dict[str, dict] = {}
+        
+        # Add stock deltas (delta = 1.0 per share for long positions)
+        # Only for symbols that also have options
+        for stock in raw_stocks:
+            symbol = stock.get("symbol", "")
+            if not symbol or symbol not in symbols_with_options:
+                continue
+            shares = float(stock.get("shares", 0))
+            stock_delta = shares  # Delta = 1.0 per share
+            
+            if symbol not in delta_by_symbol:
+                delta_by_symbol[symbol] = {"stock_delta": 0.0, "options_delta": 0.0}
+            delta_by_symbol[symbol]["stock_delta"] += stock_delta
+        
+        # Add options deltas (delta = contracts × 100 × option_delta)
+        for option in raw_options:
+            symbol = option.get("symbol", "")
+            if not symbol:
+                continue
+            contracts = float(option.get("shares", 0))  # 'shares' field holds contract count
+            option_delta = float(option.get("delta", 0))
+            is_short = option.get("is_short", False)
+            
+            # Position delta = contracts × 100 × delta
+            # API returns raw option delta (calls positive, puts negative).
+            # For short positions, we flip the sign since selling reverses directional exposure.
+            position_delta = contracts * SHARES_PER_CONTRACT * option_delta
+            if is_short:
+                position_delta = -position_delta
+            
+            if symbol not in delta_by_symbol:
+                delta_by_symbol[symbol] = {"stock_delta": 0.0, "options_delta": 0.0}
+            delta_by_symbol[symbol]["options_delta"] += position_delta
+        
+        # Build formatted list
+        result = []
+        max_abs_delta = 0.0
+        
+        for symbol, deltas in delta_by_symbol.items():
+            stock_d = deltas["stock_delta"]
+            options_d = deltas["options_delta"]
+            net_d = stock_d + options_d
+            max_abs_delta = max(max_abs_delta, abs(net_d))
+            
+            result.append({
+                "symbol": symbol,
+                "stock_delta_raw": stock_d,
+                "stock_delta": f"{stock_d:+,.0f}" if stock_d != 0 else "0",
+                "options_delta_raw": options_d,
+                "options_delta": f"{options_d:+,.0f}" if options_d != 0 else "0",
+                "net_delta_raw": net_d,
+                "net_delta": f"{net_d:+,.0f}",
+                "is_bullish": net_d >= 0,
+                "is_index_fund": is_index_fund(symbol),
+            })
+        
+        # Add relative bar width (percentage of max)
+        for item in result:
+            if max_abs_delta > 0:
+                bar_pct = (abs(item["net_delta_raw"]) / max_abs_delta) * 100
+            else:
+                bar_pct = 0
+            item["bar_width"] = f"{bar_pct:.0f}%"
+        
+        # Sort by absolute net delta descending
+        result.sort(key=lambda x: abs(x["net_delta_raw"]), reverse=True)
+        return result
+    
+    @rx.var
+    def selected_account_individual_delta_exposure(self) -> list[dict]:
+        """Delta exposure filtered to individual stocks only."""
+        return [d for d in self.selected_account_delta_exposure if not d["is_index_fund"]]
+    
+    @rx.var
+    def selected_account_index_fund_delta_exposure(self) -> list[dict]:
+        """Delta exposure filtered to index funds and ETFs only."""
+        return [d for d in self.selected_account_delta_exposure if d["is_index_fund"]]
+    
+    @rx.var
     def selected_account_balance(self) -> str:
         # Sum both stocks and options
         stock_total = sum(item["raw_equity"] for item in self.selected_account_stock_holdings)
