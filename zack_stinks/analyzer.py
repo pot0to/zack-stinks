@@ -411,26 +411,3 @@ class StockAnalyzer:
             print(f"Error processing MA breakout for {symbol}: {e}")
         
         return events
-
-    # Legacy methods kept for backward compatibility (used by other parts of the app)
-    def detect_gap_events(self, symbols: list[str], volume_threshold: float = 1.5) -> list[dict]:
-        """Legacy method - prefer detect_all_signals() for batch processing."""
-        results = self.detect_all_signals(symbols, {}, volume_threshold=volume_threshold)
-        return results["gap_events"]
-
-    def detect_ma_proximity(self, symbols: list[str], threshold_pct: float = 5.0) -> list[dict]:
-        """Legacy method - prefer detect_all_signals() for batch processing."""
-        results = self.detect_all_signals(symbols, {}, ma_proximity_threshold=threshold_pct)
-        return results["ma_proximity_events"]
-
-    def detect_below_ma_200(self, symbols: list[str], symbol_accounts: dict[str, list[str]]) -> list[dict]:
-        """Legacy method - prefer detect_all_signals() for batch processing."""
-        results = self.detect_all_signals(symbols, symbol_accounts)
-        return results["below_ma_200_events"]
-
-    def detect_near_all_time_highs(
-        self, symbols: list[str], symbol_accounts: dict[str, list[str]], threshold_pct: float = 5.0
-    ) -> list[dict]:
-        """Legacy method - prefer detect_all_signals() for batch processing."""
-        results = self.detect_all_signals(symbols, symbol_accounts, near_high_threshold=threshold_pct)
-        return results["near_ath_events"]

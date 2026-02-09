@@ -1,5 +1,5 @@
 from .base import BaseState
-from .portfolio import is_index_fund
+from ..utils.symbols import is_index_fund
 import reflex as rx
 import asyncio
 import plotly.graph_objects as go
@@ -230,18 +230,6 @@ class MarketState(BaseState):
         # Sort by days_until (soonest first)
         events.sort(key=lambda x: x["days_until"])
         return events
-    
-    def _collect_portfolio_symbols(self, portfolio_state) -> tuple[list[str], dict[str, list[str]]]:
-        """Extract unique symbols and their account ownership from portfolio holdings.
-        
-        Returns (symbol_list, symbol_accounts) where symbol_accounts maps each symbol
-        to the list of account display names that hold it.
-        """
-        return self._collect_portfolio_symbols_from_data(
-            portfolio_state.all_stock_holdings,
-            portfolio_state.all_options_holdings,
-            portfolio_state.account_map
-        )
     
     def _collect_portfolio_symbols_from_data(
         self,

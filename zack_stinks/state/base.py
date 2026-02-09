@@ -14,6 +14,10 @@ class BaseState(rx.State):
     sidebar_open: bool = False
     hide_portfolio_values: bool = False
     
+    # Global portfolio loading flag - accessible from any page
+    # Used to show loading indicators across the app while portfolio data is being fetched
+    is_portfolio_loading: bool = False
+    
     # Login form state
     login_username: str = ""
     login_password: str = ""
@@ -113,6 +117,11 @@ class BaseState(rx.State):
             self.login_username = ""
             redirect_to = self.redirect_after_login or "/"
             self.redirect_after_login = "/"  # Reset for next time
+            # Pre-fetch portfolio data immediately after login
+            # This ensures data is loading (or cached) before user navigates to portfolio
+            # Lazy import to avoid circular dependency at module load time
+            from .portfolio import PortfolioState
+            yield PortfolioState.fetch_all_portfolio_data
             yield rx.redirect(redirect_to)
         else:
             self.login_error = error or "Login failed."
@@ -136,6 +145,10 @@ class BaseState(rx.State):
         if success:
             redirect_to = self.redirect_after_login or "/"
             self.redirect_after_login = "/"  # Reset for next time
+            # Pre-fetch portfolio data immediately after login
+            # Lazy import to avoid circular dependency at module load time
+            from .portfolio import PortfolioState
+            yield PortfolioState.fetch_all_portfolio_data
             yield rx.redirect(redirect_to)
         else:
             self.login_error = error or "Login failed using credentials.json."

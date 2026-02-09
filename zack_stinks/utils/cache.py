@@ -3,6 +3,15 @@
 Supports Stale-While-Revalidate (SWR) pattern for improved perceived performance:
 data is served immediately from cache (even if stale), while fresh data is fetched
 in the background.
+
+RATE LIMIT CONTEXT (see api_limits.py for full documentation):
+The TTL values below are calibrated to stay well within API rate limits:
+- MARKET_DATA_TTL (60s): Prevents excessive yfinance calls for real-time data
+- PORTFOLIO_TTL (120s): Conservative refresh for Robinhood API
+- DEFAULT_TTL (300s): General data that changes infrequently
+
+These values assume a single user. If multiple users share a server instance,
+consider increasing TTLs or implementing per-user rate limiting.
 """
 import time
 from typing import Any, Callable

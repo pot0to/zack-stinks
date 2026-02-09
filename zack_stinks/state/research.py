@@ -37,13 +37,6 @@ class ResearchState(BaseState):
     macd_signal: str = "--"
     range_52w: str = "--"  # Position in 52-week range (0-100%)
     
-    # RSI and MACD series for subplot charting
-    _rsi_series: list = []
-    _macd_line: list = []
-    _macd_signal_line: list = []
-    _macd_histogram: list = []
-    _indicator_dates: list = []
-    
     # Earnings date
     next_earnings: str = "--"
     next_earnings_detail: str = "--"  # "in X days (BMO/AMC)"

@@ -11,6 +11,35 @@ from .sidebar import sidebar
 from .disclaimer import disclaimer_banner
 
 
+def _global_loading_indicator() -> rx.Component:
+    """Global loading indicator shown when portfolio data is being fetched.
+    
+    Appears in the bottom-right corner on any page, providing feedback that
+    data is loading in the background. This ensures users know the dashboard
+    is working even if they navigate away from the portfolio page.
+    """
+    return rx.cond(
+        State.is_portfolio_loading,
+        rx.box(
+            rx.hstack(
+                rx.spinner(size="1"),
+                rx.text("Loading portfolio data...", size="2"),
+                spacing="2",
+                align="center",
+            ),
+            position="fixed",
+            bottom="1em",
+            right="1em",
+            background="rgba(0, 0, 0, 0.85)",
+            padding="0.75em 1em",
+            border_radius="8px",
+            z_index="999",
+            color="white",
+        ),
+        rx.fragment(),
+    )
+
+
 def page_layout(content: rx.Component, use_container: bool = True) -> rx.Component:
     """Standard page layout wrapper with sidebar and disclaimer.
     
@@ -46,6 +75,7 @@ def page_layout(content: rx.Component, use_container: bool = True) -> rx.Compone
             wrapped_content,
             width="100%",
         ),
+        _global_loading_indicator(),  # Shows on any page when portfolio is loading
         spacing="0",
         width="100%",
     )

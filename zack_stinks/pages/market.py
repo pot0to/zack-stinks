@@ -3,6 +3,7 @@ import reflex as rx
 from ..components.layout import page_layout
 from ..components.skeleton import skeleton_table_rows, inline_spinner
 from ..state import MarketState, State
+from ..styles.constants import MASK_ACCOUNTS
 
 
 def market_page() -> rx.Component:
@@ -221,13 +222,19 @@ def _portfolio_spotlight() -> rx.Component:
     )
     
     # Determine which view to show based on auth and data state
+    # Check global portfolio loading state first to show loading view
+    # instead of "no data" when portfolio is being fetched after login
     authenticated_content = rx.cond(
-        MarketState.portfolio_signals_loading,
+        State.is_portfolio_loading,  # Global loading flag from BaseState
         loading_view,
         rx.cond(
-            MarketState.portfolio_data_available,
-            data_view,
-            no_data_view,
+            MarketState.portfolio_signals_loading,
+            loading_view,
+            rx.cond(
+                MarketState.portfolio_data_available,
+                data_view,
+                no_data_view,
+            ),
         ),
     )
     
@@ -615,9 +622,6 @@ def _below_ma_content() -> rx.Component:
 
 def _below_ma_row(event: dict) -> rx.Component:
     """Table row for below 200-day MA event. Only accounts are masked for privacy."""
-    # Longer mask to approximate typical multi-account strings like "Account Name*1234, Other Account*5678"
-    MASK_ACCOUNTS = "********, ********"
-    
     return rx.table.row(
         rx.table.cell(rx.text(event["symbol"], weight="bold")),
         rx.table.cell(event["price"]),
@@ -706,8 +710,6 @@ def _near_ath_content() -> rx.Component:
 
 def _near_ath_row(event: dict) -> rx.Component:
     """Table row for near all-time high event. Only accounts are masked for privacy."""
-    MASK_ACCOUNTS = "********, ********"
-    
     return rx.table.row(
         rx.table.cell(rx.text(event["symbol"], weight="bold")),
         rx.table.cell(event["price"]),

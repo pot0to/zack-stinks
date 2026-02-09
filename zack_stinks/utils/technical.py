@@ -1,4 +1,12 @@
-"""Shared technical analysis utilities."""
+"""Shared technical analysis utilities.
+
+RATE LIMIT CONSIDERATIONS (see api_limits.py for full documentation):
+- yfinance has no official rate limits but community consensus is 0.5 TPS safe
+- Always prefer batch_fetch_history() over individual ticker.history() calls
+- ticker.info calls are higher risk; add 2-3s delays between sequential calls
+- All results are cached to minimize API calls
+- HTTP 429 errors indicate rate limiting; implement exponential backoff
+"""
 import asyncio
 import pandas as pd
 import yfinance as yf
@@ -112,8 +120,20 @@ def batch_fetch_history(symbols: list[str], period: str = "1y") -> dict[str, pd.
     Batch fetch historical data for multiple symbols using yfinance's download().
     Returns a dict mapping symbol -> DataFrame with OHLCV data.
     
-    This is significantly faster than individual ticker.history() calls
-    because yfinance uses threading internally for batch downloads.
+    RATE LIMIT NOTE: This is the PREFERRED method for fetching price history.
+    yf.download() fetches all symbols in a single API call, which is far more
+    efficient than individual ticker.history() calls and reduces rate limit risk.
+    
+    For 50 symbols:
+    - Individual calls: 50 API requests (high rate limit risk)
+    - Batch download: 1 API request (minimal rate limit risk)
+    
+    Args:
+        symbols: List of stock symbols to fetch
+        period: History period (1d, 5d, 1mo, 3mo, 6mo, 1y, 2y, 5y, 10y, ytd, max)
+    
+    Returns:
+        Dict mapping original symbol -> DataFrame with OHLCV columns
     """
     if not symbols:
         return {}
@@ -157,8 +177,25 @@ def batch_fetch_info(symbols: list[str]) -> dict[str, dict]:
     Fetch ticker.info for multiple symbols.
     Returns a dict mapping symbol -> info dict.
     
-    Note: yfinance doesn't support true batch info fetching, but we cache
-    results to avoid redundant calls within the same analysis run.
+    RATE LIMIT WARNING: ticker.info is a HIGH-RISK endpoint that makes multiple
+    internal requests (JSON + HTML scraping). Unlike batch_fetch_history(),
+    there is no true batch API for .info data.
+    
+    Current implementation:
+    - Fetches sequentially (no parallel calls to reduce rate limit risk)
+    - Caches results per-symbol (MARKET_DATA_TTL = 60s)
+    - No delay between calls (relies on caching to reduce total calls)
+    
+    If rate limiting becomes an issue, consider:
+    - Adding time.sleep(2) between uncached fetches
+    - Increasing MARKET_DATA_TTL for .info data specifically
+    - Implementing exponential backoff on HTTP 429 errors
+    
+    Args:
+        symbols: List of stock symbols to fetch info for
+    
+    Returns:
+        Dict mapping symbol -> info dict (empty dict for failed fetches)
     """
     result = {}
     
@@ -274,8 +311,7 @@ def get_earnings_date(symbol: str) -> dict:
     }
     
     # Skip known ETFs/index funds - they don't have earnings dates
-    # Import here to avoid circular dependency
-    from ..state.portfolio import is_index_fund
+    from .symbols import is_index_fund
     if is_index_fund(symbol):
         set_cached(cache_key, result, EARNINGS_TTL)
         return result
@@ -383,13 +419,18 @@ async def batch_fetch_earnings_async(
     """
     Fetch earnings dates for multiple symbols in parallel.
     
-    Uses asyncio.Semaphore to limit concurrent API calls and avoid
-    thread pool exhaustion. Each symbol's result is individually cached
-    by get_earnings_date(), so subsequent calls benefit from the cache.
+    RATE LIMIT NOTE: Each get_earnings_date() call may hit ticker.calendar
+    and ticker.earnings_dates endpoints. The semaphore limits concurrency
+    to prevent overwhelming Yahoo Finance's servers.
+    
+    The default max_concurrent=10 is conservative. If rate limiting occurs:
+    - Reduce to 5 for safer operation
+    - Results are cached for 6 hours (EARNINGS_TTL), so subsequent calls are free
+    - Consider adding a small delay in fetch_one() if 429 errors persist
     
     Args:
         symbols: List of stock symbols to fetch earnings for
-        max_concurrent: Maximum concurrent API calls (default 10, balances speed vs rate limits)
+        max_concurrent: Maximum concurrent API calls (default 10)
     
     Returns:
         Dict mapping symbol -> earnings data dict (empty dict for failed fetches)

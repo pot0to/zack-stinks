@@ -43,34 +43,76 @@ def _login_required_view() -> rx.Component:
     )
 
 
+def _loading_overlay() -> rx.Component:
+    """Full-screen loading overlay shown during portfolio fetch and analysis.
+    
+    Blocks all user interaction and provides clear feedback that data is loading.
+    This prevents the confusing UX where tab clicks queue up and execute rapidly
+    when loading completes.
+    """
+    return rx.box(
+        rx.center(
+            rx.vstack(
+                rx.spinner(size="3"),
+                rx.heading("Loading Portfolio", size="6"),
+                rx.text("Fetching your holdings and positions...", size="3", color="gray"),
+                spacing="4",
+                align="center",
+            ),
+            height="100vh",
+        ),
+        position="fixed",
+        top="0",
+        left="0",
+        right="0",
+        bottom="0",
+        background="rgba(0, 0, 0, 0.85)",
+        z_index="1000",
+    )
+
+
 def _portfolio_content() -> rx.Component:
     """Main portfolio content with account tabs."""
-    return rx.container(
-        rx.vstack(
-            rx.heading("My Portfolio", size="8", margin_bottom="0.5em"),
-            rx.cond(
-                State.is_logged_in,
-                rx.tabs.root(
-                    rx.tabs.list(
+    return rx.box(
+        # Full-screen loading overlay only during initial data fetch (FETCHING phase)
+        # During ANALYZING phase, UI is interactive with inline skeleton loaders
+        rx.cond(
+            PortfolioState.is_fetching,
+            _loading_overlay(),
+            rx.fragment(),
+        ),
+        # Main content
+        rx.container(
+            rx.vstack(
+                rx.heading("My Portfolio", size="8", margin_bottom="0.5em"),
+                rx.cond(
+                    State.is_logged_in,
+                    rx.tabs.root(
+                        rx.tabs.list(
+                            rx.foreach(
+                                PortfolioState.account_names,
+                                lambda name: rx.tabs.trigger(
+                                    name, 
+                                    value=name,
+                                    disabled=PortfolioState.is_fetching,
+                                ),
+                            ),
+                        ),
                         rx.foreach(
                             PortfolioState.account_names,
-                            lambda name: rx.tabs.trigger(name, value=name),
+                            lambda name: rx.tabs.content(_account_summary(name), value=name),
                         ),
+                        value=PortfolioState.selected_account,
+                        on_change=PortfolioState.change_tab,
+                        width="100%",
                     ),
-                    rx.foreach(
-                        PortfolioState.account_names,
-                        lambda name: rx.tabs.content(_account_summary(name), value=name),
-                    ),
-                    value=PortfolioState.selected_account,
-                    on_change=PortfolioState.change_tab,
-                    width="100%",
+                    _login_required_view(),
                 ),
-                _login_required_view(),
             ),
+            width="100%",
+            padding="2em",
+            size="4",
         ),
-        width="100%",
-        padding="2em",
-        size="4",
     )
 
 
