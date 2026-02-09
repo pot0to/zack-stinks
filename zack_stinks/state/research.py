@@ -43,8 +43,8 @@ class ResearchState(BaseState):
     
     # Fundamental indicators
     has_fundamentals: bool = True  # False for ETFs
-    pe_ratio: str = "--"
-    pe_zone: str = "--"  # Value/Fair/Premium
+    pe_ratio: str = "--"  # Display format: "32.5 → 28.1" or just "32.5" if forward unavailable
+    pe_direction: str = "--"  # Growth Expected/Improving/Stable/Caution/TTM Only/Unprofitable
     revenue_growth: str = "--"
     revenue_growth_zone: str = "--"  # Accelerating/Stable/Declining
     profit_margin: str = "--"
@@ -606,28 +606,39 @@ class ResearchState(BaseState):
             
             self.has_fundamentals = True
             
-            # P/E Ratio with zone classification
-            pe = info.get('trailingPE') or info.get('forwardPE')
-            if pe is not None:
-                if pe < 0:
-                    # Negative P/E indicates unprofitable company
-                    self.pe_ratio = "Negative"
-                    self.pe_zone = "Unprofitable"
-                elif pe > 0:
-                    self.pe_ratio = f"{pe:.1f}"
-                    # Zone based on absolute thresholds (sector-agnostic baseline)
-                    if pe < 15:
-                        self.pe_zone = "Value"
-                    elif pe <= 25:
-                        self.pe_zone = "Fair"
-                    else:
-                        self.pe_zone = "Premium"
+            # P/E Ratio: Compare Forward vs Trailing to show earnings growth expectations
+            # This is more actionable than static thresholds since it shows market sentiment
+            trailing_pe = info.get('trailingPE')
+            forward_pe = info.get('forwardPE')
+            
+            # Handle negative P/E (unprofitable company)
+            if (trailing_pe is not None and trailing_pe < 0) or (forward_pe is not None and forward_pe < 0):
+                self.pe_ratio = "Negative"
+                self.pe_direction = "Unprofitable"
+            elif trailing_pe is not None and trailing_pe > 0 and forward_pe is not None and forward_pe > 0:
+                # Both available: show comparison with arrow notation
+                self.pe_ratio = f"{trailing_pe:.1f} → {forward_pe:.1f}"
+                # Calculate percentage change to determine direction
+                pct_change = ((forward_pe - trailing_pe) / trailing_pe) * 100
+                if pct_change < -15:
+                    self.pe_direction = "Growth Expected"  # Strong earnings improvement anticipated
+                elif pct_change < -5:
+                    self.pe_direction = "Improving"  # Modest earnings growth expected
+                elif pct_change <= 5:
+                    self.pe_direction = "Stable"  # Earnings expected flat
                 else:
-                    self.pe_ratio = "N/A"
-                    self.pe_zone = "--"
+                    self.pe_direction = "Caution"  # Earnings expected to decline
+            elif trailing_pe is not None and trailing_pe > 0:
+                # Only trailing available
+                self.pe_ratio = f"{trailing_pe:.1f}"
+                self.pe_direction = "TTM Only"
+            elif forward_pe is not None and forward_pe > 0:
+                # Only forward available (rare)
+                self.pe_ratio = f"{forward_pe:.1f} (Fwd)"
+                self.pe_direction = "Fwd Only"
             else:
                 self.pe_ratio = "N/A"
-                self.pe_zone = "--"
+                self.pe_direction = "--"
             
             # Revenue Growth (YoY) with zone classification
             rev_growth = info.get('revenueGrowth')
@@ -694,7 +705,7 @@ class ResearchState(BaseState):
     def _reset_fundamentals(self):
         """Reset all fundamental indicators to default values."""
         self.pe_ratio = "N/A"
-        self.pe_zone = "--"
+        self.pe_direction = "--"
         self.revenue_growth = "N/A"
         self.revenue_growth_zone = "--"
         self.profit_margin = "N/A"

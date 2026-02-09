@@ -217,15 +217,23 @@ def _technical_stats_row() -> rx.Component:
 
 # --- Fundamental Indicator Badges ---
 
-def _pe_zone_badge() -> rx.Component:
-    """Dynamic badge for P/E ratio zone. Premium uses orange to indicate attention needed."""
+def _pe_direction_badge() -> rx.Component:
+    """Dynamic badge for P/E direction based on Forward vs Trailing comparison.
+    
+    Shows whether market expects earnings growth (Forward P/E < Trailing P/E)
+    or decline (Forward P/E > Trailing P/E). This is more actionable than
+    static Value/Fair/Premium thresholds.
+    """
     return rx.match(
-        ResearchState.pe_zone,
-        ("Value", rx.badge("Value", color_scheme="green")),
-        ("Fair", rx.badge("Fair", color_scheme="gray")),
-        ("Premium", rx.badge("Premium", color_scheme="orange")),
+        ResearchState.pe_direction,
+        ("Growth Expected", rx.badge("Growth Expected", color_scheme="green")),
+        ("Improving", rx.badge("Improving", color_scheme="blue")),
+        ("Stable", rx.badge("Stable", color_scheme="gray")),
+        ("Caution", rx.badge("Caution", color_scheme="orange")),
+        ("TTM Only", rx.badge("TTM Only", color_scheme="gray")),
+        ("Fwd Only", rx.badge("Fwd Only", color_scheme="gray")),
         ("Unprofitable", rx.badge("Unprofitable", color_scheme="red")),
-        rx.badge(ResearchState.pe_zone, color_scheme="gray"),
+        rx.badge(ResearchState.pe_direction, color_scheme="gray"),
     )
 
 
@@ -279,10 +287,11 @@ def _fundamental_stats_row() -> rx.Component:
         stat_card(
             "P/E Ratio",
             ResearchState.pe_ratio,
-            badge=_pe_zone_badge(),
-            info_text="Price-to-Earnings ratio measures how much investors pay per dollar of earnings. "
-                      "Value (<15) may indicate undervaluation, Fair (15-25) is typical, "
-                      "Premium (>25) suggests growth expectations. Compare within same sector.",
+            badge=_pe_direction_badge(),
+            info_text="Compares Trailing P/E (past 12 months) → Forward P/E (analyst estimates). "
+                      "When Forward < Trailing, the market expects earnings growth. "
+                      "'Growth Expected' means Forward P/E is >15% lower, suggesting strong anticipated improvement. "
+                      "'Caution' means Forward P/E is higher, suggesting expected earnings decline.",
         ),
         stat_card(
             "Revenue Growth",
