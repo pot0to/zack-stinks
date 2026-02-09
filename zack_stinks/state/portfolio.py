@@ -7,7 +7,7 @@ import pandas as pd
 import yfinance as yf
 from .base import BaseState
 from ..utils.cache import get_cached, set_cached, PORTFOLIO_TTL, MARKET_DATA_TTL
-from ..utils.technical import batch_fetch_earnings
+from ..utils.technical import batch_fetch_earnings, batch_fetch_history
 from ..styles.constants import PL_GREEN_BASE, PL_GREEN_DEEP, PL_RED_BASE, PL_RED_DEEP, PL_NEUTRAL
 
 SHARES_PER_CONTRACT = 100
@@ -931,18 +931,22 @@ class PortfolioState(BaseState):
         - range_52w_data: {symbol: range_pct}
         - earnings_data: {symbol: {days_until, earnings_date_str, timing}}
         
-        Only fetches sector/range data for individual stocks (excludes index funds/ETFs).
-        Earnings data is fetched for all stocks since individual stocks have earnings.
+        Sector data is only fetched for individual stocks (excludes index funds/ETFs).
+        52-week range data is fetched for ALL symbols (stocks and ETFs).
+        Earnings data is fetched for individual stocks only.
         """
-        # Collect unique symbols across all accounts (individual stocks only for sector/range)
+        # Collect unique symbols across all accounts
         all_symbols = set()
         individual_symbols = set()
+        etf_symbols = set()
         for acc_stocks in all_stocks.values():
             for stock in acc_stocks:
                 symbol = stock.get("symbol", "")
                 if symbol:
                     all_symbols.add(symbol)
-                    if not is_index_fund(symbol):
+                    if is_index_fund(symbol):
+                        etf_symbols.add(symbol)
+                    else:
                         individual_symbols.add(symbol)
         
         if not all_symbols:
@@ -972,8 +976,10 @@ class PortfolioState(BaseState):
         for symbol, info in results:
             symbol_info[symbol] = info
         
-        # Build range_52w_data from fetched info
+        # Build range_52w_data from fetched info (individual stocks)
         range_52w_data = {}
+        symbols_missing_range = []
+        
         for symbol, info in symbol_info.items():
             current = info.get("currentPrice") or info.get("regularMarketPrice")
             high_52 = info.get("fiftyTwoWeekHigh")
@@ -982,6 +988,29 @@ class PortfolioState(BaseState):
             if current and high_52 and low_52 and high_52 > low_52:
                 range_pct = ((current - low_52) / (high_52 - low_52)) * 100
                 range_52w_data[symbol] = float(range_pct)
+            else:
+                # Track symbols missing 52-week data for fallback calculation
+                symbols_missing_range.append(symbol)
+        
+        # Fallback: calculate 52-week range from historical data for symbols
+        # where ticker.info didn't provide it (common for ETFs and some stocks)
+        # Also include all ETFs since they rarely have reliable ticker.info data
+        symbols_needing_history = list(set(symbols_missing_range) | etf_symbols)
+        
+        if symbols_needing_history:
+            history_data = await asyncio.to_thread(
+                batch_fetch_history, symbols_needing_history, "1y"
+            )
+            for symbol in symbols_needing_history:
+                df = history_data.get(symbol)
+                if df is not None and not df.empty and "High" in df.columns and "Low" in df.columns:
+                    high_52 = df["High"].max()
+                    low_52 = df["Low"].min()
+                    current = df["Close"].iloc[-1] if "Close" in df.columns else None
+                    
+                    if current and high_52 and low_52 and high_52 > low_52:
+                        range_pct = ((current - low_52) / (high_52 - low_52)) * 100
+                        range_52w_data[symbol] = float(range_pct)
         
         # Build sector_data per account
         sector_data = {}
