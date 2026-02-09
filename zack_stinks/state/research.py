@@ -14,6 +14,7 @@ class ResearchState(BaseState):
     """Manages stock research data and calculations."""
     ticker: str = "AAPL"
     period: str = "6mo"
+    active_tab: str = "technical"  # "technical" or "fundamentals"
     
     # Stock statistics
     current_price: str = "--"
@@ -30,6 +31,19 @@ class ResearchState(BaseState):
     macd_signal: str = "--"
     range_52w: str = "--"  # Position in 52-week range (0-100%)
     
+    # Fundamental indicators
+    has_fundamentals: bool = True  # False for ETFs
+    pe_ratio: str = "--"
+    pe_zone: str = "--"  # Value/Fair/Premium
+    revenue_growth: str = "--"
+    revenue_growth_zone: str = "--"  # Accelerating/Stable/Declining
+    profit_margin: str = "--"
+    profit_margin_zone: str = "--"  # Strong/Average/Weak
+    roe: str = "--"
+    roe_zone: str = "--"  # Strong/Average/Weak
+    debt_to_equity: str = "--"
+    debt_to_equity_zone: str = "--"  # Conservative/Moderate/Aggressive
+    
     # Chart figure
     price_chart: go.Figure = go.Figure()
 
@@ -38,6 +52,9 @@ class ResearchState(BaseState):
 
     def set_period(self, value: str):
         self.period = value
+
+    def set_active_tab(self, value: str):
+        self.active_tab = value
 
     async def fetch_stock_data(self):
         """Fetch stock data and calculate all statistics.
@@ -200,6 +217,9 @@ class ResearchState(BaseState):
                 chart_hist, ma_50_filtered, ma_200_filtered, use_weekly
             )
 
+            # Fetch fundamental data from ticker info
+            await self._fetch_fundamentals(ticker_obj)
+
             yield rx.toast.success(f"Loaded {self.ticker}")
 
         except Exception as e:
@@ -327,3 +347,120 @@ class ResearchState(BaseState):
         fig.update_yaxes(gridcolor='rgba(255,255,255,0.1)')
 
         return fig
+
+    async def _fetch_fundamentals(self, ticker_obj):
+        """Fetch and process fundamental indicators from ticker info.
+        
+        Retrieves P/E ratio, revenue growth, profit margin, ROE, and debt-to-equity
+        from yfinance info dictionary. Classifies each metric into zones for
+        color-coded badge display.
+        """
+        try:
+            info = await asyncio.to_thread(lambda: ticker_obj.info)
+            
+            # Check if this is an ETF (no fundamental data available)
+            quote_type = info.get('quoteType', '')
+            if quote_type in ('ETF', 'MUTUALFUND', 'INDEX'):
+                self.has_fundamentals = False
+                self._reset_fundamentals()
+                return
+            
+            self.has_fundamentals = True
+            
+            # P/E Ratio with zone classification
+            pe = info.get('trailingPE') or info.get('forwardPE')
+            if pe is not None:
+                if pe < 0:
+                    # Negative P/E indicates unprofitable company
+                    self.pe_ratio = "Negative"
+                    self.pe_zone = "Unprofitable"
+                elif pe > 0:
+                    self.pe_ratio = f"{pe:.1f}"
+                    # Zone based on absolute thresholds (sector-agnostic baseline)
+                    if pe < 15:
+                        self.pe_zone = "Value"
+                    elif pe <= 25:
+                        self.pe_zone = "Fair"
+                    else:
+                        self.pe_zone = "Premium"
+                else:
+                    self.pe_ratio = "N/A"
+                    self.pe_zone = "--"
+            else:
+                self.pe_ratio = "N/A"
+                self.pe_zone = "--"
+            
+            # Revenue Growth (YoY) with zone classification
+            rev_growth = info.get('revenueGrowth')
+            if rev_growth is not None:
+                self.revenue_growth = f"{rev_growth * 100:+.1f}%"
+                if rev_growth > 0.10:
+                    self.revenue_growth_zone = "Accelerating"
+                elif rev_growth >= 0:
+                    self.revenue_growth_zone = "Stable"
+                else:
+                    self.revenue_growth_zone = "Declining"
+            else:
+                self.revenue_growth = "N/A"
+                self.revenue_growth_zone = "--"
+            
+            # Profit Margin (Net) with zone classification
+            margin = info.get('profitMargins')
+            if margin is not None:
+                self.profit_margin = f"{margin * 100:.1f}%"
+                if margin > 0.15:
+                    self.profit_margin_zone = "Strong"
+                elif margin >= 0.05:
+                    self.profit_margin_zone = "Average"
+                else:
+                    self.profit_margin_zone = "Weak"
+            else:
+                self.profit_margin = "N/A"
+                self.profit_margin_zone = "--"
+            
+            # ROE (Return on Equity) with zone classification
+            roe_val = info.get('returnOnEquity')
+            if roe_val is not None:
+                self.roe = f"{roe_val * 100:.1f}%"
+                if roe_val > 0.15:
+                    self.roe_zone = "Strong"
+                elif roe_val >= 0.08:
+                    self.roe_zone = "Average"
+                else:
+                    self.roe_zone = "Weak"
+            else:
+                self.roe = "N/A"
+                self.roe_zone = "--"
+            
+            # Debt-to-Equity with zone classification
+            de_ratio = info.get('debtToEquity')
+            if de_ratio is not None:
+                # yfinance returns this as a percentage (e.g., 150 = 1.5 ratio)
+                de_normalized = de_ratio / 100 if de_ratio > 10 else de_ratio
+                self.debt_to_equity = f"{de_normalized:.2f}"
+                if de_normalized < 0.5:
+                    self.debt_to_equity_zone = "Conservative"
+                elif de_normalized <= 1.5:
+                    self.debt_to_equity_zone = "Moderate"
+                else:
+                    self.debt_to_equity_zone = "Aggressive"
+            else:
+                self.debt_to_equity = "N/A"
+                self.debt_to_equity_zone = "--"
+                
+        except Exception:
+            # Gracefully handle any API errors
+            self._reset_fundamentals()
+    
+    def _reset_fundamentals(self):
+        """Reset all fundamental indicators to default values."""
+        self.pe_ratio = "N/A"
+        self.pe_zone = "--"
+        self.revenue_growth = "N/A"
+        self.revenue_growth_zone = "--"
+        self.profit_margin = "N/A"
+        self.profit_margin_zone = "--"
+        self.roe = "N/A"
+        self.roe_zone = "--"
+        self.debt_to_equity = "N/A"
+        self.debt_to_equity_zone = "--"

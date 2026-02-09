@@ -1,4 +1,4 @@
-"""Stock Research page UI."""
+"""Stock Research page UI with Technical and Fundamental analysis tabs."""
 import reflex as rx
 from ..components.layout import page_layout
 from ..components.cards import stat_card
@@ -24,8 +24,8 @@ def _research_content() -> rx.Component:
             ),
             # Input controls
             _search_controls(),
-            # Stats row
-            _stats_row(),
+            # Tab navigation and stats
+            _tabbed_stats(),
             # Chart
             rx.box(
                 rx.plotly(data=ResearchState.price_chart, style={"width": "100%", "height": "100%"}),
@@ -87,15 +87,48 @@ def _search_controls() -> rx.Component:
     )
 
 
+def _tabbed_stats() -> rx.Component:
+    """Tabbed interface for Technical and Fundamental indicators."""
+    return rx.tabs.root(
+        rx.tabs.list(
+            rx.tabs.trigger("Technical", value="technical"),
+            rx.cond(
+                ResearchState.has_fundamentals,
+                rx.tabs.trigger("Fundamentals", value="fundamentals"),
+                rx.fragment(),
+            ),
+        ),
+        rx.tabs.content(
+            _technical_stats_row(),
+            value="technical",
+            padding_top="1em",
+        ),
+        rx.tabs.content(
+            rx.cond(
+                ResearchState.has_fundamentals,
+                _fundamental_stats_row(),
+                _no_fundamentals_message(),
+            ),
+            value="fundamentals",
+            padding_top="1em",
+        ),
+        value=ResearchState.active_tab,
+        on_change=ResearchState.set_active_tab,
+        width="100%",
+    )
+
+
+# --- Technical Indicator Badges ---
+
 def _rsi_zone_badge() -> rx.Component:
     """Dynamic badge for RSI zone with color-coded buy/sell signal context."""
     return rx.match(
         ResearchState.rsi_zone,
-        ("Oversold", rx.badge("Oversold", color_scheme="green")),  # Buy signal
-        ("Weak", rx.badge("Weak", color_scheme="orange")),  # Caution
-        ("Bullish", rx.badge("Bullish", color_scheme="blue")),  # Hold
-        ("Overbought", rx.badge("Overbought", color_scheme="red")),  # Sell signal
-        rx.badge(ResearchState.rsi_zone, color_scheme="gray"),  # Fallback
+        ("Oversold", rx.badge("Oversold", color_scheme="green")),
+        ("Weak", rx.badge("Weak", color_scheme="orange")),
+        ("Bullish", rx.badge("Bullish", color_scheme="blue")),
+        ("Overbought", rx.badge("Overbought", color_scheme="red")),
+        rx.badge(ResearchState.rsi_zone, color_scheme="gray"),
     )
 
 
@@ -103,15 +136,15 @@ def _volatility_zone_badge() -> rx.Component:
     """Dynamic badge for volatility zone relative to stock's own history."""
     return rx.match(
         ResearchState.volatility_zone,
-        ("Low", rx.badge("Low", color_scheme="blue")),  # Calmer than usual
-        ("Normal", rx.badge("Normal", color_scheme="green")),  # Typical for this stock
-        ("High", rx.badge("High", color_scheme="red")),  # More volatile than usual
-        rx.badge(ResearchState.volatility_zone, color_scheme="gray"),  # Fallback
+        ("Low", rx.badge("Low", color_scheme="blue")),
+        ("Normal", rx.badge("Normal", color_scheme="green")),
+        ("High", rx.badge("High", color_scheme="red")),
+        rx.badge(ResearchState.volatility_zone, color_scheme="gray"),
     )
 
 
-def _stats_row() -> rx.Component:
-    """Row of stat cards for research metrics."""
+def _technical_stats_row() -> rx.Component:
+    """Row of stat cards for technical indicators."""
     return rx.hstack(
         stat_card(
             "Price",
@@ -139,8 +172,7 @@ def _stats_row() -> rx.Component:
             badge=_volatility_zone_badge(),
             info_text="HV30: Annualized standard deviation of daily returns over 30 trading days. "
                       "Zone compares current HV30 to the stock's own 52-week rolling average: "
-                      "Low (<70% of avg), Normal (70-130%), High (>130%). "
-                      "'Normal' means typical for THIS stock, not the market. SPY shown for market baseline.",
+                      "Low (<70% of avg), Normal (70-130%), High (>130%). SPY shown for market baseline.",
         ),
         stat_card("vs 50 MA", ResearchState.ma_50_pct),
         stat_card("vs 200 MA", ResearchState.ma_200_pct),
@@ -148,4 +180,131 @@ def _stats_row() -> rx.Component:
         spacing="3",
         flex_wrap="wrap",
         width="100%",
+    )
+
+
+# --- Fundamental Indicator Badges ---
+
+def _pe_zone_badge() -> rx.Component:
+    """Dynamic badge for P/E ratio zone. Premium uses orange to indicate attention needed."""
+    return rx.match(
+        ResearchState.pe_zone,
+        ("Value", rx.badge("Value", color_scheme="green")),
+        ("Fair", rx.badge("Fair", color_scheme="gray")),
+        ("Premium", rx.badge("Premium", color_scheme="orange")),
+        ("Unprofitable", rx.badge("Unprofitable", color_scheme="red")),
+        rx.badge(ResearchState.pe_zone, color_scheme="gray"),
+    )
+
+
+def _revenue_growth_badge() -> rx.Component:
+    """Dynamic badge for revenue growth zone."""
+    return rx.match(
+        ResearchState.revenue_growth_zone,
+        ("Accelerating", rx.badge("Accelerating", color_scheme="green")),
+        ("Stable", rx.badge("Stable", color_scheme="gray")),
+        ("Declining", rx.badge("Declining", color_scheme="red")),
+        rx.badge(ResearchState.revenue_growth_zone, color_scheme="gray"),
+    )
+
+
+def _profit_margin_badge() -> rx.Component:
+    """Dynamic badge for profit margin zone."""
+    return rx.match(
+        ResearchState.profit_margin_zone,
+        ("Strong", rx.badge("Strong", color_scheme="green")),
+        ("Average", rx.badge("Average", color_scheme="gray")),
+        ("Weak", rx.badge("Weak", color_scheme="red")),
+        rx.badge(ResearchState.profit_margin_zone, color_scheme="gray"),
+    )
+
+
+def _roe_badge() -> rx.Component:
+    """Dynamic badge for ROE zone."""
+    return rx.match(
+        ResearchState.roe_zone,
+        ("Strong", rx.badge("Strong", color_scheme="green")),
+        ("Average", rx.badge("Average", color_scheme="gray")),
+        ("Weak", rx.badge("Weak", color_scheme="red")),
+        rx.badge(ResearchState.roe_zone, color_scheme="gray"),
+    )
+
+
+def _debt_to_equity_badge() -> rx.Component:
+    """Dynamic badge for debt-to-equity zone."""
+    return rx.match(
+        ResearchState.debt_to_equity_zone,
+        ("Conservative", rx.badge("Conservative", color_scheme="green")),
+        ("Moderate", rx.badge("Moderate", color_scheme="gray")),
+        ("Aggressive", rx.badge("Aggressive", color_scheme="red")),
+        rx.badge(ResearchState.debt_to_equity_zone, color_scheme="gray"),
+    )
+
+
+def _fundamental_stats_row() -> rx.Component:
+    """Row of stat cards for fundamental indicators."""
+    return rx.hstack(
+        stat_card(
+            "P/E Ratio",
+            ResearchState.pe_ratio,
+            badge=_pe_zone_badge(),
+            info_text="Price-to-Earnings ratio measures how much investors pay per dollar of earnings. "
+                      "Value (<15) may indicate undervaluation, Fair (15-25) is typical, "
+                      "Premium (>25) suggests growth expectations. Compare within same sector.",
+        ),
+        stat_card(
+            "Revenue Growth",
+            ResearchState.revenue_growth,
+            badge=_revenue_growth_badge(),
+            info_text="Year-over-year revenue change. Accelerating (>10%) indicates strong expansion, "
+                      "Stable (0-10%) is healthy maintenance, Declining (<0%) warrants investigation.",
+        ),
+        stat_card(
+            "Profit Margin",
+            ResearchState.profit_margin,
+            badge=_profit_margin_badge(),
+            info_text="Net profit margin shows what percentage of revenue becomes profit after all expenses. "
+                      "Strong (>15%) indicates pricing power, Average (5-15%) is typical, "
+                      "Weak (<5%) may signal competitive pressure or inefficiency.",
+        ),
+        stat_card(
+            "ROE",
+            ResearchState.roe,
+            badge=_roe_badge(),
+            info_text="Return on Equity measures how efficiently the company generates profit from shareholder capital. "
+                      "Strong (>15%) indicates effective management, Average (8-15%) is acceptable, "
+                      "Weak (<8%) suggests poor capital efficiency.",
+        ),
+        stat_card(
+            "Debt/Equity",
+            ResearchState.debt_to_equity,
+            badge=_debt_to_equity_badge(),
+            info_text="Debt-to-Equity ratio shows financial leverage. Conservative (<0.5) means low risk, "
+                      "Moderate (0.5-1.5) is typical, Aggressive (>1.5) indicates higher financial risk. "
+                      "Capital-intensive industries naturally carry more debt.",
+        ),
+        spacing="3",
+        flex_wrap="wrap",
+        width="100%",
+    )
+
+
+def _no_fundamentals_message() -> rx.Component:
+    """Message shown when fundamental data is not available (ETFs, etc.)."""
+    return rx.box(
+        rx.hstack(
+            rx.icon("info", size=16, color="gray"),
+            rx.text(
+                "Fundamental data is not available for ETFs and index funds. "
+                "Use the Technical tab for analysis.",
+                size="2",
+                color="gray",
+            ),
+            spacing="2",
+            align="center",
+        ),
+        padding="1em",
+        background=rx.color("gray", 2),
+        border_radius="8px",
+        border=f"1px solid {rx.color('gray', 4)}",
     )
