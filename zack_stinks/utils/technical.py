@@ -1,4 +1,5 @@
 """Shared technical analysis utilities."""
+import asyncio
 import pandas as pd
 import yfinance as yf
 from datetime import datetime, date
@@ -363,15 +364,48 @@ def get_earnings_date(symbol: str) -> dict:
 
 def batch_fetch_earnings(symbols: list[str]) -> dict[str, dict]:
     """
-    Fetch earnings dates for multiple symbols.
+    Fetch earnings dates for multiple symbols (synchronous version).
     Returns dict mapping symbol -> earnings data dict.
     
-    Note: yfinance doesn't support true batch earnings fetching,
-    but results are cached to avoid redundant calls.
+    Note: This is the legacy synchronous version. Prefer batch_fetch_earnings_async()
+    for better performance when called from async context.
     """
     result = {}
-    
     for symbol in symbols:
         result[symbol] = get_earnings_date(symbol)
-    
     return result
+
+
+async def batch_fetch_earnings_async(
+    symbols: list[str], 
+    max_concurrent: int = 10
+) -> dict[str, dict]:
+    """
+    Fetch earnings dates for multiple symbols in parallel.
+    
+    Uses asyncio.Semaphore to limit concurrent API calls and avoid
+    thread pool exhaustion. Each symbol's result is individually cached
+    by get_earnings_date(), so subsequent calls benefit from the cache.
+    
+    Args:
+        symbols: List of stock symbols to fetch earnings for
+        max_concurrent: Maximum concurrent API calls (default 10, balances speed vs rate limits)
+    
+    Returns:
+        Dict mapping symbol -> earnings data dict (empty dict for failed fetches)
+    """
+    if not symbols:
+        return {}
+    
+    semaphore = asyncio.Semaphore(max_concurrent)
+    
+    async def fetch_one(symbol: str) -> tuple[str, dict]:
+        async with semaphore:
+            try:
+                return symbol, await asyncio.to_thread(get_earnings_date, symbol)
+            except Exception as e:
+                print(f"Error fetching earnings for {symbol}: {e}")
+                return symbol, {}
+    
+    results = await asyncio.gather(*[fetch_one(s) for s in symbols])
+    return dict(results)

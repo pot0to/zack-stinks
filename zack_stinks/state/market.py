@@ -6,7 +6,7 @@ import plotly.graph_objects as go
 import yfinance as yf
 from ..analyzer import StockAnalyzer
 from ..utils.cache import get_cached, set_cached, MARKET_DATA_TTL, DEFAULT_TTL
-from ..utils.technical import batch_fetch_earnings
+from ..utils.technical import batch_fetch_earnings_async
 
 class MarketState(BaseState):
     market_data: dict[str, dict[str, str]] = {}
@@ -125,19 +125,9 @@ class MarketState(BaseState):
                 all_stock_holdings = cached_portfolio["all_stock_holdings"]
                 all_options_holdings = cached_portfolio["all_options_holdings"]
                 account_map = cached_portfolio["account_map"]
-                
-                # Update portfolio state in a quick, non-blocking manner
-                # by yielding control back to the event loop
-                async with portfolio_state:
-                    if not portfolio_state.all_stock_holdings:
-                        portfolio_state.account_map = cached_portfolio["account_map"]
-                        portfolio_state.all_stock_holdings = cached_portfolio["all_stock_holdings"]
-                        portfolio_state.all_options_holdings = cached_portfolio["all_options_holdings"]
-                        portfolio_state.metric_data = cached_portfolio["metric_data"]
-                        portfolio_state.sp500_daily_change_pct = cached_portfolio.get("sp500_daily_pct", 0.0)
-                        portfolio_state.sector_data = cached_portfolio.get("sector_data", {})
-                        portfolio_state.range_52w_data = cached_portfolio.get("range_52w_data", {})
-                        portfolio_state.earnings_data = cached_portfolio.get("earnings_data", {})
+                # Note: We intentionally do NOT update PortfolioState here.
+                # The portfolio page will load its own data from cache when visited.
+                # Acquiring a lock on PortfolioState would block tab switching.
             else:
                 # No cached data available - user needs to visit Portfolio page
                 self.gap_events = []
@@ -177,8 +167,8 @@ class MarketState(BaseState):
                 analyzer.detect_all_signals, symbol_list, symbol_accounts
             )
             
-            # Fetch earnings data for all symbols
-            earnings_data = await asyncio.to_thread(batch_fetch_earnings, symbol_list)
+            # Fetch earnings data for all symbols (parallel async fetch)
+            earnings_data = await batch_fetch_earnings_async(symbol_list)
             upcoming_earnings = self._process_earnings_events(earnings_data, symbol_accounts)
             
             self.gap_events = results["gap_events"]

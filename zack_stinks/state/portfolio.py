@@ -7,7 +7,7 @@ import pandas as pd
 import yfinance as yf
 from .base import BaseState
 from ..utils.cache import get_cached, set_cached, PORTFOLIO_TTL, MARKET_DATA_TTL
-from ..utils.technical import batch_fetch_earnings, batch_fetch_history
+from ..utils.technical import batch_fetch_earnings, batch_fetch_earnings_async, batch_fetch_history
 from ..styles.constants import PL_GREEN_BASE, PL_GREEN_DEEP, PL_RED_BASE, PL_RED_DEEP, PL_NEUTRAL
 
 SHARES_PER_CONTRACT = 100
@@ -130,9 +130,10 @@ class PortfolioState(BaseState):
     
     # S&P 500 benchmark data for comparison
     sp500_daily_change_pct: float = 0.0
-
-    cash_balance: str = "$0.00"
-    buying_power: str = "$0.00"
+    
+    # Analysis phase loading state (sector, range, earnings)
+    # Separate from is_loading so primary data shows immediately
+    is_analyzing: bool = False
     
     # Sorting state for stock holdings table
     # Default: sort by allocation descending
@@ -160,13 +161,37 @@ class PortfolioState(BaseState):
     def account_names(self) -> list[str]:
         return list(self.account_map.keys())
     
-    def change_tab(self, new_name: str):
-        self.selected_account = new_name
-        # Update metrics instantly from storage when tab changes
-        acc_num = self.account_map.get(new_name)
+    @rx.var
+    def cash_balance(self) -> str:
+        """Cash balance for the selected account, derived from metric_data.
+        
+        Computed var allows tab switching without state lock contention.
+        """
+        acc_num = self.account_map.get(self.selected_account)
         if acc_num and acc_num in self.metric_data:
-            self.cash_balance = self.metric_data[acc_num]["cash"]
-            self.buying_power = self.metric_data[acc_num]["bp"]
+            return str(self.metric_data[acc_num].get("cash", "$0.00"))
+        return "$0.00"
+    
+    @rx.var
+    def buying_power(self) -> str:
+        """Buying power for the selected account, derived from metric_data.
+        
+        Computed var allows tab switching without state lock contention.
+        """
+        acc_num = self.account_map.get(self.selected_account)
+        if acc_num and acc_num in self.metric_data:
+            return str(self.metric_data[acc_num].get("bp", "$0.00"))
+        return "$0.00"
+    
+    def change_tab(self, new_name: str):
+        """Switch to a different account tab.
+        
+        Only sets selected_account; cash_balance and buying_power are
+        computed vars that derive their values automatically. This keeps
+        the event handler fast and avoids state lock contention during
+        background data loading.
+        """
+        self.selected_account = new_name
     
     @rx.var
     def selected_account_stock_holdings(self) -> list[dict]:
@@ -934,6 +959,9 @@ class PortfolioState(BaseState):
         Sector data is only fetched for individual stocks (excludes index funds/ETFs).
         52-week range data is fetched for ALL symbols (stocks and ETFs).
         Earnings data is fetched for individual stocks only.
+        
+        Performance: Earnings fetch runs in parallel with info/history fetches
+        since it has no dependencies on their results.
         """
         # Collect unique symbols across all accounts
         all_symbols = set()
@@ -958,6 +986,12 @@ class PortfolioState(BaseState):
         if cached:
             return cached["sector_data"], cached["range_data"], cached.get("earnings_data", {})
         
+        # Start earnings fetch immediately (no dependency on info/history)
+        # This runs in parallel with the info fetch below
+        earnings_task = None
+        if individual_symbols:
+            earnings_task = batch_fetch_earnings_async(list(individual_symbols))
+        
         # Fetch ticker info for individual symbols in parallel (for sector/range)
         symbol_info = {}
         
@@ -970,10 +1004,10 @@ class PortfolioState(BaseState):
                 print(f"Error fetching info for {symbol}: {e}")
                 return symbol, {}
         
-        tasks = [fetch_info(s) for s in individual_symbols]
-        results = await asyncio.gather(*tasks)
+        info_tasks = [fetch_info(s) for s in individual_symbols]
+        info_results = await asyncio.gather(*info_tasks)
         
-        for symbol, info in results:
+        for symbol, info in info_results:
             symbol_info[symbol] = info
         
         # Build range_52w_data from fetched info (individual stocks)
@@ -997,20 +1031,34 @@ class PortfolioState(BaseState):
         # Also include all ETFs since they rarely have reliable ticker.info data
         symbols_needing_history = list(set(symbols_missing_range) | etf_symbols)
         
-        if symbols_needing_history:
+        # Run history fetch (if needed) in parallel with waiting for earnings
+        history_data = {}
+        if symbols_needing_history and earnings_task:
+            history_task = asyncio.to_thread(
+                batch_fetch_history, symbols_needing_history, "1y"
+            )
+            history_data, earnings_data = await asyncio.gather(history_task, earnings_task)
+        elif symbols_needing_history:
             history_data = await asyncio.to_thread(
                 batch_fetch_history, symbols_needing_history, "1y"
             )
-            for symbol in symbols_needing_history:
-                df = history_data.get(symbol)
-                if df is not None and not df.empty and "High" in df.columns and "Low" in df.columns:
-                    high_52 = df["High"].max()
-                    low_52 = df["Low"].min()
-                    current = df["Close"].iloc[-1] if "Close" in df.columns else None
-                    
-                    if current and high_52 and low_52 and high_52 > low_52:
-                        range_pct = ((current - low_52) / (high_52 - low_52)) * 100
-                        range_52w_data[symbol] = float(range_pct)
+            earnings_data = {}
+        elif earnings_task:
+            earnings_data = await earnings_task
+        else:
+            earnings_data = {}
+        
+        # Process history data for 52-week range
+        for symbol in symbols_needing_history:
+            df = history_data.get(symbol)
+            if df is not None and not df.empty and "High" in df.columns and "Low" in df.columns:
+                high_52 = df["High"].max()
+                low_52 = df["Low"].min()
+                current = df["Close"].iloc[-1] if "Close" in df.columns else None
+                
+                if current and high_52 and low_52 and high_52 > low_52:
+                    range_pct = ((current - low_52) / (high_52 - low_52)) * 100
+                    range_52w_data[symbol] = float(range_pct)
         
         # Build sector_data per account
         sector_data = {}
@@ -1031,13 +1079,6 @@ class PortfolioState(BaseState):
             
             sector_data[acc_num] = acc_sectors
         
-        # Fetch earnings data for individual stocks (not index funds)
-        earnings_data = {}
-        if individual_symbols:
-            earnings_data = await asyncio.to_thread(
-                batch_fetch_earnings, list(individual_symbols)
-            )
-        
         # Cache results
         set_cached(cache_key, {
             "sector_data": sector_data, 
@@ -1049,6 +1090,12 @@ class PortfolioState(BaseState):
 
     @rx.event(background=True)
     async def fetch_all_portfolio_data(self):
+        """Fetch core portfolio data (holdings, prices, P/L).
+        
+        This method fetches the essential portfolio data and updates the UI
+        immediately. The analysis phase (sector, 52-week range, earnings) runs
+        as a separate background task to keep the UI responsive.
+        """
         async with self:
             self.is_loading = True
 
@@ -1067,25 +1114,21 @@ class PortfolioState(BaseState):
                     self.earnings_data = cached_data.get("earnings_data", {})
                     if not self.selected_account and self.account_names:
                         self.selected_account = self.account_names[0]
-                    if self.selected_account:
-                        acc_num = self.account_map.get(self.selected_account)
-                        if acc_num and acc_num in self.metric_data:
-                            self.cash_balance = self.metric_data[acc_num]["cash"]
-                            self.buying_power = self.metric_data[acc_num]["bp"]
                     self.is_loading = False
-                return rx.toast.success("Portfolio loaded from cache")
+                yield rx.toast.success("Portfolio loaded from cache")
+                return
 
             # Fetch all accounts
             url = "https://api.robinhood.com/accounts/?default_to_all_accounts=true&include_managed=true&include_multiple_individual=true"
             res = await asyncio.to_thread(rs.request_get, url, "regular")
             
             if res is None:
-                # Session expired - reset login state, UI will show login placeholder
                 async with self:
                     self.is_logged_in = False
                     self.account_name = "User"
                     self.is_loading = False
-                return rx.toast.info("Session expired. Please sign in to view portfolio.")
+                yield rx.toast.info("Session expired. Please sign in to view portfolio.")
+                return
             
             temp_map = {}
             for acc in res.get('results', []):
@@ -1136,50 +1179,78 @@ class PortfolioState(BaseState):
                     "equity_prev_close": result["equity_prev_close"],
                 }
 
-            # Fetch sector and 52-week range data for individual stocks
-            sector_data, range_52w_data, earnings_data = await self._fetch_sector_and_range_data(all_stocks)
-
-            # Update state once with all data
+            # Update state with core portfolio data immediately
+            # This makes the UI responsive while analysis runs in background
             async with self:
                 self.all_stock_holdings = all_stocks
                 self.all_options_holdings = all_options
                 self.metric_data = all_metrics
                 self.sp500_daily_change_pct = sp500_pct
+                self.loading_accounts = set()
+                self.is_loading = False
+
+            # Trigger analysis phase as separate background task
+            # This fetches sector, 52-week range, and earnings data
+            yield PortfolioState.analyze_portfolio_positions
+
+            yield rx.toast.success("Portfolio loaded")
+        except Exception as e:
+            error_str = str(e)
+            if "401" in error_str or "Unauthorized" in error_str:
+                async with self:
+                    self.is_logged_in = False
+                    self.account_name = "User"
+                    self.is_loading = False
+                yield rx.toast.info("Session expired. Please sign in to view portfolio.")
+                return
+            yield rx.toast.error(f"Sync failed: {error_str}")
+        finally:
+            async with self:
+                self.is_loading = False
+
+    @rx.event(background=True)
+    async def analyze_portfolio_positions(self):
+        """Fetch sector, 52-week range, and earnings data in background.
+        
+        Runs as a separate background task after core portfolio data loads,
+        keeping the UI responsive for tab switching and other interactions.
+        """
+        # Copy all needed state at the start to avoid race conditions
+        async with self:
+            self.is_analyzing = True
+            all_stocks = dict(self.all_stock_holdings)
+            all_options = dict(self.all_options_holdings)
+            metric_data = dict(self.metric_data)
+            sp500_pct = self.sp500_daily_change_pct
+            account_map = dict(self.account_map)
+
+        try:
+            if not all_stocks:
+                return
+
+            # Fetch sector, range, and earnings data
+            sector_data, range_52w_data, earnings_data = await self._fetch_sector_and_range_data(all_stocks)
+
+            # Update state with analysis results
+            async with self:
                 self.sector_data = sector_data
                 self.range_52w_data = range_52w_data
                 self.earnings_data = earnings_data
-                
-                if self.selected_account:
-                    acc_num = self.account_map.get(self.selected_account)
-                    if acc_num and acc_num in self.metric_data:
-                        self.cash_balance = self.metric_data[acc_num]["cash"]
-                        self.buying_power = self.metric_data[acc_num]["bp"]
-                
-                self.loading_accounts = set()
 
-            # Cache the results
+            # Update cache with complete data (using local copies for consistency)
             set_cached("portfolio_data", {
-                "account_map": temp_map,
+                "account_map": account_map,
                 "all_stock_holdings": all_stocks,
                 "all_options_holdings": all_options,
-                "metric_data": all_metrics,
+                "metric_data": metric_data,
                 "sp500_daily_pct": sp500_pct,
                 "sector_data": sector_data,
                 "range_52w_data": range_52w_data,
                 "earnings_data": earnings_data,
             }, PORTFOLIO_TTL)
 
-            return rx.toast.success("Portfolio Updated")
         except Exception as e:
-            error_str = str(e)
-            # Check for 401 Unauthorized errors
-            if "401" in error_str or "Unauthorized" in error_str:
-                async with self:
-                    self.is_logged_in = False
-                    self.account_name = "User"
-                    self.is_loading = False
-                return rx.toast.info("Session expired. Please sign in to view portfolio.")
-            return rx.toast.error(f"Sync failed: {error_str}")
+            print(f"Error analyzing portfolio: {e}")
         finally:
             async with self:
-                self.is_loading = False
+                self.is_analyzing = False

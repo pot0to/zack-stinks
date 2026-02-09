@@ -1,6 +1,7 @@
 """Market Overview page UI."""
 import reflex as rx
 from ..components.layout import page_layout
+from ..components.skeleton import skeleton_table_rows, inline_spinner
 from ..state import MarketState, State
 
 
@@ -60,14 +61,72 @@ def _portfolio_spotlight() -> rx.Component:
         width="100%",
     )
     
-    # Loading state
-    loading_view = rx.center(
-        rx.hstack(
-            rx.spinner(size="2"),
-            rx.text("Analyzing portfolio signals...", color="gray", size="2"),
-            spacing="2",
+    # Loading state - show tab structure with skeleton content
+    # This lets users see the available tabs while data loads
+    loading_view = rx.tabs.root(
+        rx.tabs.list(
+            rx.tabs.trigger(
+                rx.hstack(
+                    rx.icon("zap", size=14),
+                    rx.text("Price Gaps"),
+                    spacing="2",
+                    align="center",
+                ),
+                value="gaps",
+            ),
+            rx.tabs.trigger(
+                rx.hstack(
+                    rx.icon("trending-up", size=14),
+                    rx.text("Trend Signals"),
+                    spacing="2",
+                    align="center",
+                ),
+                value="breakouts",
+            ),
+            rx.tabs.trigger(
+                rx.hstack(
+                    rx.icon("target", size=14),
+                    rx.text("Near Key Levels"),
+                    spacing="2",
+                    align="center",
+                ),
+                value="ma_proximity",
+            ),
+            rx.tabs.trigger(
+                rx.hstack(
+                    rx.icon("triangle-alert", size=14),
+                    rx.text("Below 200d MA"),
+                    spacing="2",
+                    align="center",
+                ),
+                value="below_ma",
+            ),
+            rx.tabs.trigger(
+                rx.hstack(
+                    rx.icon("rocket", size=14),
+                    rx.text("Near ATH"),
+                    spacing="2",
+                    align="center",
+                ),
+                value="near_ath",
+            ),
+            rx.tabs.trigger(
+                rx.hstack(
+                    rx.icon("calendar", size=14),
+                    rx.text("Upcoming Earnings"),
+                    spacing="2",
+                    align="center",
+                ),
+                value="earnings",
+            ),
         ),
-        padding="2em",
+        rx.tabs.content(_skeleton_tab_content(), value="gaps", padding_top="1em"),
+        rx.tabs.content(_skeleton_tab_content(), value="breakouts", padding_top="1em"),
+        rx.tabs.content(_skeleton_tab_content(), value="ma_proximity", padding_top="1em"),
+        rx.tabs.content(_skeleton_tab_content(), value="below_ma", padding_top="1em"),
+        rx.tabs.content(_skeleton_tab_content(), value="near_ath", padding_top="1em"),
+        rx.tabs.content(_skeleton_tab_content(), value="earnings", padding_top="1em"),
+        default_value="gaps",
         width="100%",
     )
     
@@ -187,6 +246,52 @@ def _portfolio_spotlight() -> rx.Component:
         width="100%",
         margin_top="2em",
         padding="1em",
+    )
+
+
+def _skeleton_tab_content() -> rx.Component:
+    """Skeleton content shown in Portfolio Spotlight tabs while loading.
+    
+    Shows a table structure with skeleton rows to indicate data is being fetched.
+    This maintains layout stability and communicates loading state clearly.
+    """
+    from ..components.skeleton import skeleton_box
+    
+    return rx.vstack(
+        rx.table.root(
+            rx.table.header(
+                rx.table.row(
+                    rx.table.column_header_cell(skeleton_box(width="60px", height="14px")),
+                    rx.table.column_header_cell(skeleton_box(width="50px", height="14px")),
+                    rx.table.column_header_cell(skeleton_box(width="70px", height="14px")),
+                    rx.table.column_header_cell(skeleton_box(width="60px", height="14px")),
+                ),
+            ),
+            rx.table.body(
+                rx.table.row(
+                    rx.table.cell(skeleton_box(width="50px", height="16px")),
+                    rx.table.cell(skeleton_box(width="60px", height="16px")),
+                    rx.table.cell(skeleton_box(width="45px", height="16px")),
+                    rx.table.cell(skeleton_box(width="55px", height="16px")),
+                ),
+                rx.table.row(
+                    rx.table.cell(skeleton_box(width="45px", height="16px")),
+                    rx.table.cell(skeleton_box(width="55px", height="16px")),
+                    rx.table.cell(skeleton_box(width="50px", height="16px")),
+                    rx.table.cell(skeleton_box(width="60px", height="16px")),
+                ),
+                rx.table.row(
+                    rx.table.cell(skeleton_box(width="55px", height="16px")),
+                    rx.table.cell(skeleton_box(width="50px", height="16px")),
+                    rx.table.cell(skeleton_box(width="55px", height="16px")),
+                    rx.table.cell(skeleton_box(width="45px", height="16px")),
+                ),
+            ),
+            width="100%",
+        ),
+        inline_spinner("Analyzing portfolio signals..."),
+        spacing="3",
+        width="100%",
     )
 
 

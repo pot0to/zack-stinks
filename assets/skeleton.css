@@ -1,0 +1,93 @@
+/* Skeleton loader animations for progressive data loading.
+ * Used by skeleton components to indicate loading state.
+ * Respects user's motion preferences for accessibility.
+ */
+
+/* Pulse animation: subtle opacity change */
+@keyframes skeleton-pulse {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 0.7; }
+}
+
+.skeleton-pulse {
+  animation: skeleton-pulse 1.5s ease-in-out infinite;
+}
+
+/* Shimmer animation: left-to-right gradient sweep (modern loading effect) */
+@keyframes skeleton-shimmer {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+
+.skeleton-shimmer {
+  background: linear-gradient(
+    90deg,
+    var(--gray-4) 0%,
+    var(--gray-5) 20%,
+    var(--gray-6) 40%,
+    var(--gray-5) 60%,
+    var(--gray-4) 80%,
+    var(--gray-4) 100%
+  );
+  background-size: 200% 100%;
+  animation: skeleton-shimmer 1.8s ease-in-out infinite;
+}
+
+/* Fade-in animation: smooth transition when real content replaces skeleton */
+@keyframes fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.fade-in {
+  animation: fade-in 0.3s ease-out forwards;
+}
+
+/* Slide-in animation: for cards and larger content blocks */
+@keyframes slide-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.slide-in {
+  animation: slide-in 0.4s ease-out forwards;
+}
+
+/* Staggered animation delay classes for sequential reveals */
+.stagger-1 { animation-delay: 0.05s; }
+.stagger-2 { animation-delay: 0.1s; }
+.stagger-3 { animation-delay: 0.15s; }
+.stagger-4 { animation-delay: 0.2s; }
+.stagger-5 { animation-delay: 0.25s; }
+
+/* Accessibility: Respect user's motion preferences */
+@media (prefers-reduced-motion: reduce) {
+  .skeleton-pulse,
+  .skeleton-shimmer {
+    animation: none;
+    opacity: 0.5;
+  }
+  
+  .fade-in,
+  .slide-in {
+    animation: none;
+    opacity: 1;
+    transform: none;
+  }
+}

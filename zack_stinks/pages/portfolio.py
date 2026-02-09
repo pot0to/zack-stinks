@@ -5,6 +5,7 @@ Displays user's Robinhood portfolio with holdings, options, and performance metr
 import reflex as rx
 from ..components.layout import page_layout
 from ..components.cards import metric_card
+from ..components.skeleton import skeleton_range_bar, skeleton_badge, skeleton_donut_chart, inline_spinner
 from ..state import PortfolioState, State
 from ..styles.constants import MASK_SHARES, MASK_DOLLAR, MASK_PERCENT, MASK_DELTA
 
@@ -138,7 +139,10 @@ def _stats_header() -> rx.Component:
 
 
 def _allocation_view() -> rx.Component:
-    """Asset allocation treemap, sector exposure, and delta exposure in a tabbed layout."""
+    """Asset allocation treemap, sector exposure, and delta exposure in a tabbed layout.
+    
+    Sector exposure shows skeleton loader while analysis is in progress.
+    """
     return rx.card(
         rx.tabs.root(
             rx.tabs.list(
@@ -175,7 +179,17 @@ def _allocation_view() -> rx.Component:
                         spacing="1",
                         align="center",
                     ),
-                    rx.plotly(data=PortfolioState.sector_exposure_chart, width="100%", height="320px"),
+                    # Show skeleton while analyzing, then actual chart
+                    rx.cond(
+                        PortfolioState.is_analyzing,
+                        rx.vstack(
+                            skeleton_donut_chart(),
+                            inline_spinner("Loading sector data..."),
+                            spacing="2",
+                            width="100%",
+                        ),
+                        rx.plotly(data=PortfolioState.sector_exposure_chart, width="100%", height="320px"),
+                    ),
                     width="100%",
                     padding_top="1em",
                 ),
@@ -470,36 +484,44 @@ def _stock_row(h: dict) -> rx.Component:
     Only position-specific values are masked (shares, value, cost, P/L, allocation).
     Current price is market data and not masked.
     Includes earnings badge for stocks with earnings within 7 days.
+    Shows skeleton loaders for slow-loading data (earnings) while analyzing.
     """
-    # Symbol cell with optional earnings badge
+    # Earnings badge: shows skeleton while loading, then actual badge or nothing
+    earnings_badge = rx.cond(
+        PortfolioState.is_analyzing,
+        # Skeleton badge while loading earnings data
+        skeleton_badge(),
+        # Data loaded - show badge if upcoming earnings, otherwise nothing
+        rx.cond(
+            h["has_upcoming_earnings"],
+            rx.cond(
+                h["earnings_urgency"] == "imminent",
+                rx.tooltip(
+                    rx.badge(
+                        rx.icon("calendar", size=12),
+                        color_scheme="red",
+                        variant="soft",
+                    ),
+                    content=h["earnings_tooltip"],
+                ),
+                rx.tooltip(
+                    rx.badge(
+                        rx.icon("calendar", size=12),
+                        color_scheme="yellow",
+                        variant="soft",
+                    ),
+                    content=h["earnings_tooltip"],
+                ),
+            ),
+            rx.fragment(),
+        ),
+    )
+    
+    # Symbol cell with earnings badge
     symbol_cell = rx.table.cell(
         rx.hstack(
             rx.text(h["symbol"], weight="bold"),
-            # Earnings badge: calendar icon with urgency color coding
-            # Each urgency level gets its own tooltip to avoid nested rx.cond issues
-            rx.cond(
-                h["has_upcoming_earnings"],
-                rx.cond(
-                    h["earnings_urgency"] == "imminent",
-                    rx.tooltip(
-                        rx.badge(
-                            rx.icon("calendar", size=12),
-                            color_scheme="red",
-                            variant="soft",
-                        ),
-                        content=h["earnings_tooltip"],
-                    ),
-                    rx.tooltip(
-                        rx.badge(
-                            rx.icon("calendar", size=12),
-                            color_scheme="yellow",
-                            variant="soft",
-                        ),
-                        content=h["earnings_tooltip"],
-                    ),
-                ),
-                rx.fragment(),
-            ),
+            earnings_badge,
             spacing="2",
             align="center",
         )
@@ -569,41 +591,49 @@ def _stock_row(h: dict) -> rx.Component:
 def _range_52w_cell(h: dict) -> rx.Component:
     """52-week range cell with visual progress bar and percentage.
     
-    Shows a horizontal bar indicating where the current price sits within
-    the 52-week trading range. 0% = at 52-week low, 100% = at 52-week high.
+    Shows a skeleton loader while analysis is in progress, then displays
+    the actual range bar once data is available. 0% = at 52-week low,
+    100% = at 52-week high.
     """
     # Cast to number for comparison operations
     range_val = h["range_52w_raw"].to(int)
     
+    # Show skeleton while analyzing, then actual data or N/A
     return rx.cond(
-        h["range_52w_raw"] != None,
-        rx.vstack(
-            rx.box(
+        PortfolioState.is_analyzing,
+        # Skeleton state while loading
+        skeleton_range_bar(),
+        # Data loaded - show actual value or N/A
+        rx.cond(
+            h["range_52w_raw"] != None,
+            rx.vstack(
                 rx.box(
-                    width=h["range_52w"],
-                    height="100%",
-                    background=rx.cond(
-                        range_val > 70,
-                        "rgb(34, 197, 94)",  # Green for strong momentum
-                        rx.cond(
-                            range_val < 30,
-                            "rgb(239, 68, 68)",  # Red for weakness
-                            "rgb(59, 130, 246)",  # Blue for neutral
+                    rx.box(
+                        width=h["range_52w"],
+                        height="100%",
+                        background=rx.cond(
+                            range_val > 70,
+                            "rgb(34, 197, 94)",  # Green for strong momentum
+                            rx.cond(
+                                range_val < 30,
+                                "rgb(239, 68, 68)",  # Red for weakness
+                                "rgb(59, 130, 246)",  # Blue for neutral
+                            ),
                         ),
+                        border_radius="2px",
                     ),
+                    width="60px",
+                    height="6px",
+                    background=rx.color("gray", 5),
                     border_radius="2px",
+                    overflow="hidden",
                 ),
-                width="60px",
-                height="6px",
-                background=rx.color("gray", 5),
-                border_radius="2px",
-                overflow="hidden",
+                rx.text(h["range_52w"], size="1", color="gray"),
+                spacing="1",
+                align="center",
             ),
-            rx.text(h["range_52w"], size="1", color="gray"),
-            spacing="1",
-            align="center",
+            rx.text("N/A", size="2", color="gray"),
         ),
-        rx.text("N/A", size="2", color="gray"),
     )
 
 

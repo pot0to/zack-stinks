@@ -11,6 +11,7 @@ from .pages.login import login_page
 # App with dark theme (color constants are optimized for dark backgrounds)
 # Note: For true adaptive light/dark, colors would need to use Reflex theme tokens
 app = rx.App(
+    stylesheets=["/skeleton.css"],  # Custom CSS for skeleton loaders
     theme=rx.theme(
         appearance="dark",
         accent_color="purple",
