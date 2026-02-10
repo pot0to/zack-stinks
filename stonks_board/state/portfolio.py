@@ -78,6 +78,193 @@ def _toggle_sort(current_col: str, current_asc: bool, new_col: str) -> tuple[str
     return new_col, True
 
 
+# Standalone chart builders for use by both instance methods and background threads.
+# These are module-level functions to avoid issues with pickling self in thread pools.
+
+# Sector color mapping used by sector chart builder
+_SECTOR_COLORS = {
+    "Consumer Cyclical": "#EF7622",
+    "Consumer Discretionary": "#EF7622",
+    "Financial Services": "#F59E0B",
+    "Financials": "#F59E0B",
+    "Real Estate": "#D97706",
+    "Basic Materials": "#B45309",
+    "Materials": "#B45309",
+    "Technology": "#1F55A5",
+    "Information Technology": "#1F55A5",
+    "Communication Services": "#3B82F6",
+    "Energy": "#0EA5E9",
+    "Industrials": "#6366F1",
+    "Healthcare": "#518428",
+    "Consumer Defensive": "#22C55E",
+    "Consumer Staples": "#22C55E",
+    "Utilities": "#10B981",
+    "Other": "#6B7280",
+}
+
+
+def _build_treemap_figure(
+    raw_stocks: list[dict],
+    raw_options: list[dict],
+    hide_values: bool,
+) -> go.Figure:
+    """Build treemap figure from raw holdings data.
+    
+    Standalone function usable from both computed vars and background threads.
+    """
+    if not raw_stocks and not raw_options:
+        return go.Figure()
+    
+    labels = []
+    values = []
+    colors = []
+    hover_texts = []
+    
+    for s in raw_stocks:
+        labels.append(s.get("symbol", "???"))
+        value = abs(float(s.get("raw_equity", 0)))
+        values.append(value)
+        
+        cost_basis = float(s.get("cost_basis", 0))
+        pl = float(s.get("pl", 0))
+        cost_basis_reliable = s.get("cost_basis_reliable", True)
+        
+        if cost_basis_reliable and cost_basis > 0:
+            pl_pct = (pl / cost_basis) * 100
+            pl_pct_str = f"{pl_pct:+.2f}%"
+            pl_dollar_str = f"+${pl:,.2f}" if pl >= 0 else f"-${abs(pl):,.2f}"
+        else:
+            pl_pct = None
+            pl_pct_str = "N/A"
+            pl_dollar_str = "N/A"
+        
+        colors.append(_pl_to_color(pl_pct))
+        if hide_values:
+            hover_texts.append("*****<br>P/L: *****")
+        else:
+            hover_texts.append(f"${value:,.2f}<br>P/L: {pl_dollar_str} ({pl_pct_str})")
+    
+    options_by_symbol: dict[str, dict] = {}
+    for o in raw_options:
+        symbol = o.get("symbol", "???")
+        value = abs(float(o.get("raw_equity", 0)))
+        cost_basis = float(o.get("cost_basis", 0))
+        pl = float(o.get("pl", 0))
+        
+        if symbol not in options_by_symbol:
+            options_by_symbol[symbol] = {"value": 0, "cost_basis": 0, "pl": 0}
+        
+        options_by_symbol[symbol]["value"] += value
+        options_by_symbol[symbol]["cost_basis"] += cost_basis
+        options_by_symbol[symbol]["pl"] += pl
+    
+    for symbol, data in options_by_symbol.items():
+        labels.append(f"{symbol} (Opt)")
+        values.append(data["value"])
+        
+        if data["cost_basis"] > 0:
+            pl_pct = (data["pl"] / data["cost_basis"]) * 100
+            pl_pct_str = f"{pl_pct:+.2f}%"
+            pl_dollar_str = f"+${data['pl']:,.2f}" if data["pl"] >= 0 else f"-${abs(data['pl']):,.2f}"
+        else:
+            pl_pct = None
+            pl_pct_str = "N/A"
+            pl_dollar_str = "N/A"
+        
+        colors.append(_pl_to_color(pl_pct))
+        if hide_values:
+            hover_texts.append("*****<br>P/L: *****")
+        else:
+            hover_texts.append(f"${data['value']:,.2f}<br>P/L: {pl_dollar_str} ({pl_pct_str})")
+
+    fig = go.Figure(go.Treemap(
+        labels=labels,
+        parents=[""] * len(labels),
+        values=values,
+        textinfo="label+percent parent",
+        marker=dict(colors=colors),
+        textfont=dict(color="black"),
+        hovertemplate="<b>%{label}</b><br>%{customdata}<extra></extra>",
+        customdata=hover_texts,
+    ))
+    fig.update_layout(
+        margin=dict(t=0, l=0, r=0, b=0),
+        template="plotly_dark",
+        height=350,
+        transition_duration=0,
+        uirevision="treemap",
+        hoverlabel=dict(
+            bgcolor="rgba(30, 30, 30, 0.95)",
+            bordercolor="rgba(100, 100, 100, 0.5)",
+            font=dict(color="white", size=13),
+        ),
+    )
+    return fig
+
+
+def _build_sector_chart_figure(
+    sector_values: dict[str, float],
+    hide_values: bool,
+) -> go.Figure:
+    """Build sector exposure donut chart from sector data.
+    
+    Standalone function usable from both computed vars and background threads.
+    """
+    if not sector_values:
+        return go.Figure()
+    
+    sorted_sectors = sorted(sector_values.items(), key=lambda x: x[1], reverse=True)
+    
+    top_sectors = sorted_sectors[:6]
+    other_value = sum(v for _, v in sorted_sectors[6:])
+    
+    labels = [s[0] for s in top_sectors]
+    values = [s[1] for s in top_sectors]
+    
+    if other_value > 0:
+        labels.append("Other")
+        values.append(other_value)
+    
+    colors = [_SECTOR_COLORS.get(label, "#6B7280") for label in labels]
+    total = sum(values)
+    
+    if hide_values:
+        hover_template = "<b>%{label}</b><br>*****<br>%{percent}<extra></extra>"
+    else:
+        hover_template = "<b>%{label}</b><br>$%{value:,.0f}<br>%{percent}<extra></extra>"
+    
+    fig = go.Figure(go.Pie(
+        labels=labels,
+        values=values,
+        hole=0.5,
+        marker=dict(colors=colors),
+        textinfo="label+percent",
+        textposition="outside",
+        automargin=False,
+        hovertemplate=hover_template,
+    ))
+    
+    fig.update_layout(
+        template="plotly_dark",
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        height=350,
+        margin=dict(t=70, l=80, r=80, b=70),
+        showlegend=False,
+        annotations=[
+            dict(
+                text=f"${total:,.0f}" if not hide_values else "*****",
+                x=0.5, y=0.5,
+                font_size=16,
+                font_color="white",
+                showarrow=False,
+            )
+        ],
+    )
+    
+    return fig
+
+
 class PortfolioState(BaseState):
     # Map account names to their internal Robinhood account numbers
     account_map: dict[str, str] = {}
@@ -106,8 +293,8 @@ class PortfolioState(BaseState):
     
     # Combined loading state flag. Kept in sync with loading_phase via the
     # _set_loading_phase() helper method. True during any non-IDLE phase.
-    # Note: UI blocking now uses is_fetching computed var instead, allowing
-    # user interaction during ANALYZING phase while background analysis runs.
+    # UI blocking uses this flag to show the loading overlay during both
+    # FETCHING and ANALYZING phases, preventing user interaction until complete.
     is_portfolio_busy: bool = False
     
     # Retry tracking for Yahoo Finance failures (eventual consistency)
@@ -430,181 +617,7 @@ class PortfolioState(BaseState):
     def _build_treemap_cache_key(self, acc_num: str) -> str:
         """Build cache key for treemap including privacy state."""
         return f"{acc_num}:{self.hide_portfolio_values}"
-    
-    def _build_treemap_for_account(self, acc_num: str) -> go.Figure:
-        """Build treemap figure for a single account. Used for cache population."""
-        raw_stocks = self.all_stock_holdings.get(acc_num, [])
-        raw_options = self.all_options_holdings.get(acc_num, [])
-        
-        if not raw_stocks and not raw_options:
-            return go.Figure()
-        
-        labels = []
-        values = []
-        colors = []
-        hover_texts = []
-        
-        for s in raw_stocks:
-            labels.append(s.get("symbol", "???"))
-            value = abs(float(s.get("raw_equity", 0)))
-            values.append(value)
-            
-            cost_basis = float(s.get("cost_basis", 0))
-            pl = float(s.get("pl", 0))
-            cost_basis_reliable = s.get("cost_basis_reliable", True)
-            
-            if cost_basis_reliable and cost_basis > 0:
-                pl_pct = (pl / cost_basis) * 100
-                pl_pct_str = f"{pl_pct:+.2f}%"
-                pl_dollar_str = f"+${pl:,.2f}" if pl >= 0 else f"-${abs(pl):,.2f}"
-            else:
-                pl_pct = None
-                pl_pct_str = "N/A"
-                pl_dollar_str = "N/A"
-            
-            colors.append(_pl_to_color(pl_pct))
-            if self.hide_portfolio_values:
-                hover_texts.append("*****<br>P/L: *****")
-            else:
-                hover_texts.append(f"${value:,.2f}<br>P/L: {pl_dollar_str} ({pl_pct_str})")
-        
-        options_by_symbol: dict[str, dict] = {}
-        for o in raw_options:
-            symbol = o.get("symbol", "???")
-            value = abs(float(o.get("raw_equity", 0)))
-            cost_basis = float(o.get("cost_basis", 0))
-            pl = float(o.get("pl", 0))
-            
-            if symbol not in options_by_symbol:
-                options_by_symbol[symbol] = {"value": 0, "cost_basis": 0, "pl": 0}
-            
-            options_by_symbol[symbol]["value"] += value
-            options_by_symbol[symbol]["cost_basis"] += cost_basis
-            options_by_symbol[symbol]["pl"] += pl
-        
-        for symbol, data in options_by_symbol.items():
-            labels.append(f"{symbol} (Opt)")
-            values.append(data["value"])
-            
-            if data["cost_basis"] > 0:
-                pl_pct = (data["pl"] / data["cost_basis"]) * 100
-                pl_pct_str = f"{pl_pct:+.2f}%"
-                pl_dollar_str = f"+${data['pl']:,.2f}" if data["pl"] >= 0 else f"-${abs(data['pl']):,.2f}"
-            else:
-                pl_pct = None
-                pl_pct_str = "N/A"
-                pl_dollar_str = "N/A"
-            
-            colors.append(_pl_to_color(pl_pct))
-            if self.hide_portfolio_values:
-                hover_texts.append("*****<br>P/L: *****")
-            else:
-                hover_texts.append(f"${data['value']:,.2f}<br>P/L: {pl_dollar_str} ({pl_pct_str})")
 
-        fig = go.Figure(go.Treemap(
-            labels=labels,
-            parents=[""] * len(labels),
-            values=values,
-            textinfo="label+percent parent",
-            marker=dict(colors=colors),
-            textfont=dict(color="black"),
-            hovertemplate="<b>%{label}</b><br>%{customdata}<extra></extra>",
-            customdata=hover_texts,
-        ))
-        fig.update_layout(
-            margin=dict(t=0, l=0, r=0, b=0),
-            template="plotly_dark",
-            height=350,  # Match rx.plotly component height
-            transition_duration=0,  # Disable animation on tab switch
-            uirevision="treemap",  # Preserve UI state across re-renders
-            hoverlabel=dict(
-                bgcolor="rgba(30, 30, 30, 0.95)",
-                bordercolor="rgba(100, 100, 100, 0.5)",
-                font=dict(color="white", size=13),
-            ),
-        )
-        return fig
-    
-    def _build_sector_chart_for_account(self, acc_num: str) -> go.Figure:
-        """Build sector exposure chart for a single account. Used for cache population."""
-        if acc_num not in self.sector_data:
-            return go.Figure()
-        
-        sector_values = self.sector_data.get(acc_num, {})
-        if not sector_values:
-            return go.Figure()
-        
-        sorted_sectors = sorted(sector_values.items(), key=lambda x: x[1], reverse=True)
-        
-        top_sectors = sorted_sectors[:6]
-        other_value = sum(v for _, v in sorted_sectors[6:])
-        
-        labels = [s[0] for s in top_sectors]
-        values = [s[1] for s in top_sectors]
-        
-        if other_value > 0:
-            labels.append("Other")
-            values.append(other_value)
-        
-        sector_colors = {
-            "Consumer Cyclical": "#EF7622",
-            "Consumer Discretionary": "#EF7622",
-            "Financial Services": "#F59E0B",
-            "Financials": "#F59E0B",
-            "Real Estate": "#D97706",
-            "Basic Materials": "#B45309",
-            "Materials": "#B45309",
-            "Technology": "#1F55A5",
-            "Information Technology": "#1F55A5",
-            "Communication Services": "#3B82F6",
-            "Energy": "#0EA5E9",
-            "Industrials": "#6366F1",
-            "Healthcare": "#518428",
-            "Consumer Defensive": "#22C55E",
-            "Consumer Staples": "#22C55E",
-            "Utilities": "#10B981",
-            "Other": "#6B7280",
-        }
-        
-        colors = [sector_colors.get(label, "#6B7280") for label in labels]
-        total = sum(values)
-        
-        # Mask dollar values in hover text when privacy mode is enabled
-        if self.hide_portfolio_values:
-            hover_template = "<b>%{label}</b><br>*****<br>%{percent}<extra></extra>"
-        else:
-            hover_template = "<b>%{label}</b><br>$%{value:,.0f}<br>%{percent}<extra></extra>"
-        
-        fig = go.Figure(go.Pie(
-            labels=labels,
-            values=values,
-            hole=0.5,
-            marker=dict(colors=colors),
-            textinfo="label+percent",
-            textposition="outside",
-            automargin=False,  # Prevent chart from resizing on re-render
-            hovertemplate=hover_template,
-        ))
-        
-        fig.update_layout(
-            template="plotly_dark",
-            paper_bgcolor="rgba(0,0,0,0)",
-            plot_bgcolor="rgba(0,0,0,0)",
-            height=350,
-            margin=dict(t=70, l=80, r=80, b=70),  # Larger margins for outside labels
-            showlegend=False,
-            annotations=[
-                dict(
-                    text=f"${total:,.0f}" if not self.hide_portfolio_values else "*****",
-                    x=0.5, y=0.5,
-                    font_size=16,
-                    font_color="white",
-                    showarrow=False,
-                )
-            ],
-        )
-        
-        return fig
 
     @rx.var
     def account_names(self) -> list[str]:
@@ -640,9 +653,9 @@ class PortfolioState(BaseState):
         the event handler fast and avoids state lock contention during
         background data loading.
         
-        Only blocks during FETCHING phase when core data isn't available.
-        During ANALYZING phase, tab switching is allowed since holdings
-        data is already loaded and cached.
+        Blocks during FETCHING phase when core data isn't available.
+        During ANALYZING phase, the loading overlay blocks UI interaction,
+        but this guard remains as a safety check.
         """
         if self.loading_phase == PortfolioLoadingPhase.FETCHING:
             return
@@ -801,8 +814,10 @@ class PortfolioState(BaseState):
         if cache_key in self._cached_treemaps:
             return self._cached_treemaps[cache_key]
         
-        # Cache miss - compute and store
-        fig = self._build_treemap_for_account(acc_num)
+        # Cache miss - compute using standalone function and store
+        raw_stocks = self.all_stock_holdings.get(acc_num, [])
+        raw_options = self.all_options_holdings.get(acc_num, [])
+        fig = _build_treemap_figure(raw_stocks, raw_options, self.hide_portfolio_values)
         self._cached_treemaps[cache_key] = fig
         return fig
 
@@ -818,8 +833,9 @@ class PortfolioState(BaseState):
         if cache_key in self._cached_sector_charts:
             return self._cached_sector_charts[cache_key]
         
-        # Cache miss - compute and store
-        fig = self._build_sector_chart_for_account(acc_num)
+        # Cache miss - compute using standalone function and store
+        sector_values = self.sector_data.get(acc_num, {})
+        fig = _build_sector_chart_figure(sector_values, self.hide_portfolio_values)
         self._cached_sector_charts[cache_key] = fig
         return fig
     
@@ -1411,10 +1427,10 @@ class PortfolioState(BaseState):
             
             async with self:
                 self.loading_accounts = set()
-                # Transition to ANALYZING phase. UI is now interactive since
-                # the loading overlay only shows during FETCHING. Tab switching
-                # is allowed during ANALYZING since holdings data is cached.
-                # analyze_portfolio_positions will set phase to IDLE when complete.
+                # Transition to ANALYZING phase. The loading overlay remains
+                # visible during this phase to block UI interaction until
+                # analysis completes. This prevents confusing UX where clicks
+                # queue up during background processing.
                 self._set_loading_phase(PortfolioLoadingPhase.ANALYZING)
             
             # Set cache immediately with core data (before analysis completes)
@@ -1676,138 +1692,13 @@ class PortfolioState(BaseState):
                 result.sort(key=lambda x: abs(x["net_delta_raw"]), reverse=True)
                 return result
             
-            # Build treemap figure (CPU-intensive Plotly generation)
-            def build_treemap():
-                if not raw_stocks and not raw_options:
-                    return go.Figure()
-                
-                labels, values, colors, hover_texts = [], [], [], []
-                for s in raw_stocks:
-                    labels.append(s.get("symbol", "???"))
-                    value = abs(float(s.get("raw_equity", 0)))
-                    values.append(value)
-                    cost_basis = float(s.get("cost_basis", 0))
-                    pl = float(s.get("pl", 0))
-                    cost_basis_reliable = s.get("cost_basis_reliable", True)
-                    
-                    if cost_basis_reliable and cost_basis > 0:
-                        pl_pct = (pl / cost_basis) * 100
-                        pl_pct_str = f"{pl_pct:+.2f}%"
-                        pl_dollar_str = f"+${pl:,.2f}" if pl >= 0 else f"-${abs(pl):,.2f}"
-                    else:
-                        pl_pct = None
-                        pl_pct_str = "N/A"
-                        pl_dollar_str = "N/A"
-                    
-                    colors.append(_pl_to_color(pl_pct))
-                    if hide_values:
-                        hover_texts.append("*****<br>P/L: *****")
-                    else:
-                        hover_texts.append(f"${value:,.2f}<br>P/L: {pl_dollar_str} ({pl_pct_str})")
-                
-                options_by_symbol = {}
-                for o in raw_options:
-                    symbol = o.get("symbol", "???")
-                    value = abs(float(o.get("raw_equity", 0)))
-                    cost_basis = float(o.get("cost_basis", 0))
-                    pl = float(o.get("pl", 0))
-                    if symbol not in options_by_symbol:
-                        options_by_symbol[symbol] = {"value": 0, "cost_basis": 0, "pl": 0}
-                    options_by_symbol[symbol]["value"] += value
-                    options_by_symbol[symbol]["cost_basis"] += cost_basis
-                    options_by_symbol[symbol]["pl"] += pl
-                
-                for symbol, data in options_by_symbol.items():
-                    labels.append(f"{symbol} (Opt)")
-                    values.append(data["value"])
-                    if data["cost_basis"] > 0:
-                        pl_pct = (data["pl"] / data["cost_basis"]) * 100
-                        pl_pct_str = f"{pl_pct:+.2f}%"
-                        pl_dollar_str = f"+${data['pl']:,.2f}" if data["pl"] >= 0 else f"-${abs(data['pl']):,.2f}"
-                    else:
-                        pl_pct = None
-                        pl_pct_str = "N/A"
-                        pl_dollar_str = "N/A"
-                    colors.append(_pl_to_color(pl_pct))
-                    if hide_values:
-                        hover_texts.append("*****<br>P/L: *****")
-                    else:
-                        hover_texts.append(f"${data['value']:,.2f}<br>P/L: {pl_dollar_str} ({pl_pct_str})")
-                
-                fig = go.Figure(go.Treemap(
-                    labels=labels, parents=[""] * len(labels), values=values,
-                    textinfo="label+percent parent", marker=dict(colors=colors),
-                    textfont=dict(color="black"),
-                    hovertemplate="<b>%{label}</b><br>%{customdata}<extra></extra>",
-                    customdata=hover_texts,
-                ))
-                fig.update_layout(
-                    margin=dict(t=0, l=0, r=0, b=0),
-                    template="plotly_dark",
-                    height=350,  # Match rx.plotly component height
-                    transition_duration=0,  # Disable animation on tab switch
-                    uirevision="treemap",  # Preserve UI state across re-renders
-                    hoverlabel=dict(
-                        bgcolor="rgba(30, 30, 30, 0.95)",
-                        bordercolor="rgba(100, 100, 100, 0.5)",
-                        font=dict(color="white", size=13),
-                    ),
-                )
-                return fig
-            
-            # Build sector chart (CPU-intensive Plotly generation)
-            def build_sector_chart():
-                if not account_sector_data:
-                    return go.Figure()
-                
-                sorted_sectors = sorted(account_sector_data.items(), key=lambda x: x[1], reverse=True)
-                top_sectors = sorted_sectors[:6]
-                other_value = sum(v for _, v in sorted_sectors[6:])
-                
-                labels = [s[0] for s in top_sectors]
-                values = [s[1] for s in top_sectors]
-                if other_value > 0:
-                    labels.append("Other")
-                    values.append(other_value)
-                
-                sector_colors = {
-                    "Consumer Cyclical": "#EF7622", "Consumer Discretionary": "#EF7622",
-                    "Financial Services": "#F59E0B", "Financials": "#F59E0B",
-                    "Real Estate": "#D97706", "Basic Materials": "#B45309", "Materials": "#B45309",
-                    "Technology": "#1F55A5", "Information Technology": "#1F55A5",
-                    "Communication Services": "#3B82F6", "Energy": "#0EA5E9",
-                    "Industrials": "#6366F1", "Healthcare": "#518428",
-                    "Consumer Defensive": "#22C55E", "Consumer Staples": "#22C55E",
-                    "Utilities": "#10B981", "Other": "#6B7280",
-                }
-                colors = [sector_colors.get(label, "#6B7280") for label in labels]
-                total = sum(values)
-                
-                hover_template = "<b>%{label}</b><br>*****<br>%{percent}<extra></extra>" if hide_values else \
-                                 "<b>%{label}</b><br>$%{value:,.0f}<br>%{percent}<extra></extra>"
-                
-                fig = go.Figure(go.Pie(
-                    labels=labels, values=values, hole=0.5, marker=dict(colors=colors),
-                    textinfo="label+percent", textposition="outside", automargin=False,
-                    hovertemplate=hover_template,
-                ))
-                fig.update_layout(
-                    template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-                    height=350, margin=dict(t=70, l=80, r=80, b=70), showlegend=False,
-                    annotations=[dict(
-                        text=f"${total:,.0f}" if not hide_values else "*****",
-                        x=0.5, y=0.5, font_size=16, font_color="white", showarrow=False,
-                    )],
-                )
-                return fig
-            
-            # Run all computations in thread pool
+            # Run all computations in thread pool, using standalone functions for charts
             stock_cache, option_cache, delta_cache, treemap, sector_chart = await asyncio.gather(
                 asyncio.to_thread(format_stocks),
                 asyncio.to_thread(format_options),
                 asyncio.to_thread(compute_delta),
-                asyncio.to_thread(build_treemap),
-                asyncio.to_thread(build_sector_chart),
+                asyncio.to_thread(_build_treemap_figure, raw_stocks, raw_options, hide_values),
+                asyncio.to_thread(_build_sector_chart_figure, account_sector_data, hide_values),
             )
             
             return acc_num, stock_key, stock_cache, option_key, option_cache, delta_cache, treemap_key, treemap, sector_key, sector_chart
