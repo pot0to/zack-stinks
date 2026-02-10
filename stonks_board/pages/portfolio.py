@@ -206,7 +206,7 @@ def _allocation_view() -> rx.Component:
                     rx.vstack(
                         rx.plotly(data=PortfolioState.portfolio_treemap, width="100%", height="350px"),
                         width="100%",
-                        padding_top="1em",
+                        padding="1.5em",  # Symmetric padding for tooltip space
                     ),
                     rx.center(
                         rx.vstack(
@@ -224,6 +224,7 @@ def _allocation_view() -> rx.Component:
                     ),
                 ),
                 value="treemap_tab",
+                style={"overflow": "visible"},
             ),
             rx.tabs.content(
                 rx.vstack(
@@ -291,9 +292,11 @@ def _allocation_view() -> rx.Component:
             value=PortfolioState.allocation_tab,
             on_change=PortfolioState.set_allocation_tab,
             width="100%",
+            style={"overflow": "visible"},  # Prevent tooltip clipping
         ),
         width="100%",
         margin_top="1.5em",
+        style={"overflow": "visible"},  # Prevent tooltip clipping
     )
 
 

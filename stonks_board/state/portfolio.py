@@ -511,7 +511,18 @@ class PortfolioState(BaseState):
             hovertemplate="<b>%{label}</b><br>%{customdata}<extra></extra>",
             customdata=hover_texts,
         ))
-        fig.update_layout(margin=dict(t=0, l=0, r=0, b=0), template="plotly_dark", height=300)
+        fig.update_layout(
+            margin=dict(t=0, l=0, r=0, b=0),
+            template="plotly_dark",
+            height=350,  # Match rx.plotly component height
+            transition_duration=0,  # Disable animation on tab switch
+            uirevision="treemap",  # Preserve UI state across re-renders
+            hoverlabel=dict(
+                bgcolor="rgba(30, 30, 30, 0.95)",
+                bordercolor="rgba(100, 100, 100, 0.5)",
+                font=dict(color="white", size=13),
+            ),
+        )
         return fig
     
     def _build_sector_chart_for_account(self, acc_num: str) -> go.Figure:
@@ -1730,7 +1741,18 @@ class PortfolioState(BaseState):
                     hovertemplate="<b>%{label}</b><br>%{customdata}<extra></extra>",
                     customdata=hover_texts,
                 ))
-                fig.update_layout(margin=dict(t=0, l=0, r=0, b=0), template="plotly_dark", height=300)
+                fig.update_layout(
+                    margin=dict(t=0, l=0, r=0, b=0),
+                    template="plotly_dark",
+                    height=350,  # Match rx.plotly component height
+                    transition_duration=0,  # Disable animation on tab switch
+                    uirevision="treemap",  # Preserve UI state across re-renders
+                    hoverlabel=dict(
+                        bgcolor="rgba(30, 30, 30, 0.95)",
+                        bordercolor="rgba(100, 100, 100, 0.5)",
+                        font=dict(color="white", size=13),
+                    ),
+                )
                 return fig
             
             # Build sector chart (CPU-intensive Plotly generation)

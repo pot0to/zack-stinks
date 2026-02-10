@@ -91,3 +91,50 @@
     transform: none;
   }
 }
+
+/* Fix Plotly tooltip clipping at chart edges.
+ * Plotly renders tooltips inside SVG with overflow:hidden by default,
+ * causing tooltips near edges to be cut off. This allows them to overflow.
+ * Parent containers (cards, tabs) may also clip tooltips.
+ */
+svg.main-svg,
+svg.main-svg * {
+  overflow: visible !important;
+}
+
+/* Target the specific SVG containing the hoverlayer */
+svg.main-svg:last-child {
+  overflow: visible !important;
+}
+
+/* Ensure Radix UI containers don't clip Plotly tooltips */
+.rt-Card:has(.js-plotly-plot),
+.rt-TabsContent:has(.js-plotly-plot),
+.rt-Box:has(.js-plotly-plot),
+.rt-Flex:has(.js-plotly-plot) {
+  overflow: visible !important;
+}
+
+/* Ensure the Plotly container itself allows overflow */
+.js-plotly-plot,
+.js-plotly-plot .plotly,
+.js-plotly-plot .plot-container,
+.js-plotly-plot .svg-container {
+  overflow: visible !important;
+}
+
+/* Ensure hoverlayer tooltips appear above other content */
+.hoverlayer {
+  z-index: 1000 !important;
+}
+
+/* Force all ancestors of Plotly charts to allow overflow */
+.js-plotly-plot,
+.js-plotly-plot * {
+  overflow: visible !important;
+}
+
+/* Hide force-mounted tab content when inactive.
+ * Note: This rule is kept minimal to avoid layout issues.
+ * The force_mount approach was removed due to dimension/overlay problems.
+ */
