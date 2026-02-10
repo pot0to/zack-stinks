@@ -10,7 +10,7 @@ from .base import BaseState
 from ..utils.cache import get_cached, set_cached, PORTFOLIO_TTL, MARKET_DATA_TTL, SECTOR_TTL, RANGE_52W_TTL, EARNINGS_TTL
 from ..utils.technical import batch_fetch_earnings, batch_fetch_earnings_async, batch_fetch_history
 from ..utils.symbols import is_index_fund, INDEX_FUND_SYMBOLS
-from ..styles.constants import PL_GREEN_BASE, PL_GREEN_DEEP, PL_RED_BASE, PL_RED_DEEP, PL_NEUTRAL
+from ..styles.constants import PL_GAIN_BUCKETS, PL_LOSS_BUCKETS, PL_NEUTRAL
 
 SHARES_PER_CONTRACT = 100
 
@@ -48,27 +48,28 @@ def _sort_key_for_column(x: dict, sort_col: str):
 
 
 def _pl_to_color(pl_pct: float | None) -> str:
-    """Convert P/L percentage to RGB color string.
+    """Convert P/L percentage to RGB color string using bucket-based thresholds.
     
-    Uses gradient interpolation: green for gains, red for losses, gray for N/A.
-    Intensity scales with magnitude (clamped to +/-100%).
+    Uses buckets designed for lifetime portfolio performance where gains/losses
+    can exceed 100%. Provides visual distinction across the full range of
+    long-term holding performance.
+    
+    Buckets: 0-5%, 5-15%, 15-30%, 30-50%, 50-100%, 100-200%, 200%+
     """
     if pl_pct is None:
         return f"rgb({PL_NEUTRAL[0]}, {PL_NEUTRAL[1]}, {PL_NEUTRAL[2]})"
     
-    clamped = max(-100, min(100, pl_pct))
-    intensity = abs(clamped) / 100
+    abs_pct = abs(pl_pct)
+    buckets = PL_GAIN_BUCKETS if pl_pct >= 0 else PL_LOSS_BUCKETS
     
-    if pl_pct >= 0:
-        base, deep = PL_GREEN_BASE, PL_GREEN_DEEP
-    else:
-        base, deep = PL_RED_BASE, PL_RED_DEEP
+    # Find the appropriate bucket based on absolute percentage
+    for threshold, color in buckets:
+        if abs_pct <= threshold:
+            return f"rgb({color[0]}, {color[1]}, {color[2]})"
     
-    r = int(base[0] - (base[0] - deep[0]) * intensity)
-    g = int(base[1] - (base[1] - deep[1]) * intensity)
-    b = int(base[2] - (base[2] - deep[2]) * intensity)
-    
-    return f"rgb({r}, {g}, {b})"
+    # Fallback to the last bucket (should not reach here due to inf threshold)
+    last_color = buckets[-1][1]
+    return f"rgb({last_color[0]}, {last_color[1]}, {last_color[2]})"
 
 
 def _toggle_sort(current_col: str, current_asc: bool, new_col: str) -> tuple[str, bool]:
