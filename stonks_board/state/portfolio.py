@@ -7,7 +7,7 @@ import plotly.graph_objects as go
 import pandas as pd
 import yfinance as yf
 from .base import BaseState
-from ..utils.cache import get_cached, set_cached, PORTFOLIO_TTL, MARKET_DATA_TTL
+from ..utils.cache import get_cached, set_cached, PORTFOLIO_TTL, MARKET_DATA_TTL, SECTOR_TTL, RANGE_52W_TTL, EARNINGS_TTL
 from ..utils.technical import batch_fetch_earnings, batch_fetch_earnings_async, batch_fetch_history
 from ..utils.symbols import is_index_fund, INDEX_FUND_SYMBOLS
 from ..styles.constants import PL_GREEN_BASE, PL_GREEN_DEEP, PL_RED_BASE, PL_RED_DEEP, PL_NEUTRAL
@@ -1055,12 +1055,12 @@ class PortfolioState(BaseState):
         - range_52w_data: {symbol: range_pct}
         - earnings_data: {symbol: {days_until, earnings_date_str, timing}}
         
-        Sector data is only fetched for individual stocks (excludes index funds/ETFs).
-        52-week range data is fetched for ALL symbols (stocks and ETFs).
-        Earnings data is fetched for individual stocks only.
+        Uses tiered caching to minimize yfinance API calls:
+        - Sector data: cached 7 days per symbol (rarely changes)
+        - 52-week high/low: cached 24 hours per symbol (shifts daily but meaningful change is weekly)
+        - Earnings: cached 24 hours per symbol (announced weeks in advance)
         
-        Performance: Earnings fetch runs in parallel with info/history fetches
-        since it has no dependencies on their results.
+        Only symbols missing from cache trigger yfinance API calls.
         """
         # Collect unique symbols across all accounts
         all_symbols = set()
@@ -1079,57 +1079,106 @@ class PortfolioState(BaseState):
         if not all_symbols:
             return {}, {}, {}, False
         
-        # Check cache
-        cache_key = f"sector_range_earnings_data:{','.join(sorted(all_symbols))}"
-        cached = get_cached(cache_key)
-        if cached:
-            # Return cached data with its incomplete status
-            return cached["sector_data"], cached["range_data"], cached.get("earnings_data", {}), cached.get("incomplete", False)
+        # Check per-symbol caches and identify what needs fetching
+        cached_sectors = {}  # symbol -> sector
+        cached_52w_bounds = {}  # symbol -> {high, low}
+        symbols_needing_sector = []
+        symbols_needing_52w = []
         
-        # Start earnings fetch immediately (no dependency on info/history)
-        # This runs in parallel with the info fetch below
+        for symbol in individual_symbols:
+            # Check sector cache (7-day TTL)
+            sector_cache_key = f"sector:{symbol}"
+            cached_sector = get_cached(sector_cache_key)
+            if cached_sector is not None:
+                cached_sectors[symbol] = cached_sector
+            else:
+                symbols_needing_sector.append(symbol)
+            
+            # Check 52-week bounds cache (24-hour TTL)
+            range_cache_key = f"52w_bounds:{symbol}"
+            cached_bounds = get_cached(range_cache_key)
+            if cached_bounds is not None:
+                cached_52w_bounds[symbol] = cached_bounds
+            else:
+                symbols_needing_52w.append(symbol)
+        
+        # ETFs always need 52-week data from history (no sector)
+        for symbol in etf_symbols:
+            range_cache_key = f"52w_bounds:{symbol}"
+            cached_bounds = get_cached(range_cache_key)
+            if cached_bounds is not None:
+                cached_52w_bounds[symbol] = cached_bounds
+            else:
+                symbols_needing_52w.append(symbol)
+        
+        # Start earnings fetch immediately (uses its own per-symbol cache)
         earnings_task = None
         if individual_symbols:
             earnings_task = batch_fetch_earnings_async(list(individual_symbols))
         
-        # Fetch ticker info for individual symbols in parallel (for sector/range)
+        # Fetch ticker.info only for symbols that need sector OR 52-week data
+        # This is the expensive call we want to minimize
+        symbols_needing_info = list(set(symbols_needing_sector) | (set(symbols_needing_52w) & individual_symbols))
         symbol_info = {}
         
-        async def fetch_info(symbol: str):
-            try:
-                ticker = yf.Ticker(symbol)
-                info = await asyncio.to_thread(lambda: ticker.info)
-                return symbol, info
-            except Exception as e:
-                print(f"Error fetching info for {symbol}: {e}")
-                return symbol, {}
+        if symbols_needing_info:
+            async def fetch_info(symbol: str):
+                try:
+                    ticker = yf.Ticker(symbol)
+                    info = await asyncio.to_thread(lambda: ticker.info)
+                    return symbol, info
+                except Exception as e:
+                    print(f"Error fetching info for {symbol}: {e}")
+                    return symbol, {}
+            
+            info_tasks = [fetch_info(s) for s in symbols_needing_info]
+            info_results = await asyncio.gather(*info_tasks)
+            
+            for symbol, info in info_results:
+                symbol_info[symbol] = info
+                
+                # Cache sector data (7-day TTL)
+                sector = info.get("sector")
+                if sector:
+                    set_cached(f"sector:{symbol}", sector, SECTOR_TTL)
+                    cached_sectors[symbol] = sector
+                
+                # Cache 52-week bounds (24-hour TTL)
+                high_52 = info.get("fiftyTwoWeekHigh")
+                low_52 = info.get("fiftyTwoWeekLow")
+                if high_52 and low_52:
+                    bounds = {"high": float(high_52), "low": float(low_52)}
+                    set_cached(f"52w_bounds:{symbol}", bounds, RANGE_52W_TTL)
+                    cached_52w_bounds[symbol] = bounds
         
-        info_tasks = [fetch_info(s) for s in individual_symbols]
-        info_results = await asyncio.gather(*info_tasks)
-        
-        for symbol, info in info_results:
-            symbol_info[symbol] = info
-        
-        # Build range_52w_data from fetched info (individual stocks)
+        # Build range_52w_data from cached bounds + current prices from info
         range_52w_data = {}
         symbols_missing_range = []
         
-        for symbol, info in symbol_info.items():
-            current = info.get("currentPrice") or info.get("regularMarketPrice")
-            high_52 = info.get("fiftyTwoWeekHigh")
-            low_52 = info.get("fiftyTwoWeekLow")
-            
-            if current and high_52 and low_52 and high_52 > low_52:
-                range_pct = ((current - low_52) / (high_52 - low_52)) * 100
-                range_52w_data[symbol] = float(range_pct)
+        for symbol in individual_symbols:
+            bounds = cached_52w_bounds.get(symbol)
+            if bounds:
+                # Get current price from info if we fetched it, otherwise we need history
+                info = symbol_info.get(symbol, {})
+                current = info.get("currentPrice") or info.get("regularMarketPrice")
+                
+                if current and bounds["high"] > bounds["low"]:
+                    range_pct = ((current - bounds["low"]) / (bounds["high"] - bounds["low"])) * 100
+                    range_52w_data[symbol] = float(range_pct)
+                else:
+                    symbols_missing_range.append(symbol)
             else:
-                # Track symbols missing 52-week data for fallback calculation
                 symbols_missing_range.append(symbol)
         
-        # Fallback: calculate 52-week range from historical data for symbols
-        # where ticker.info didn't provide it (common for ETFs and some stocks)
-        # Also include all ETFs since they rarely have reliable ticker.info data
-        symbols_needing_history = list(set(symbols_missing_range) | etf_symbols)
+        # ETFs and symbols missing range data need history fetch
+        symbols_needing_history = list(set(symbols_missing_range) | (etf_symbols - set(cached_52w_bounds.keys())))
+        
+        # Also need history for ETFs that have cached bounds but no current price
+        for symbol in etf_symbols:
+            if symbol in cached_52w_bounds and symbol not in range_52w_data:
+                symbols_needing_history.append(symbol)
+        
+        symbols_needing_history = list(set(symbols_needing_history))
         
         # Run history fetch (if needed) in parallel with waiting for earnings
         history_data = {}
@@ -1148,22 +1197,26 @@ class PortfolioState(BaseState):
         else:
             earnings_data = {}
         
-        # Process history data for 52-week range
+        # Process history data for 52-week range and cache bounds
         for symbol in symbols_needing_history:
             df = history_data.get(symbol)
             if df is not None and not df.empty and "High" in df.columns and "Low" in df.columns:
-                high_52 = df["High"].max()
-                low_52 = df["Low"].min()
-                current = df["Close"].iloc[-1] if "Close" in df.columns else None
+                high_52 = float(df["High"].max())
+                low_52 = float(df["Low"].min())
+                current = float(df["Close"].iloc[-1]) if "Close" in df.columns else None
                 
                 if current and high_52 and low_52 and high_52 > low_52:
+                    # Cache the bounds for future use
+                    bounds = {"high": high_52, "low": low_52}
+                    set_cached(f"52w_bounds:{symbol}", bounds, RANGE_52W_TTL)
+                    
                     range_pct = ((current - low_52) / (high_52 - low_52)) * 100
                     range_52w_data[symbol] = float(range_pct)
         
         # Track symbols that failed to get 52-week range data
         failed_range_symbols = all_symbols - set(range_52w_data.keys())
         
-        # Build sector_data per account
+        # Build sector_data per account using cached sectors
         sector_data = {}
         for acc_num, acc_stocks in all_stocks.items():
             acc_sectors = {}
@@ -1172,8 +1225,7 @@ class PortfolioState(BaseState):
                 if not symbol or is_index_fund(symbol):
                     continue
                 
-                info = symbol_info.get(symbol, {})
-                sector = info.get("sector", "Unknown")
+                sector = cached_sectors.get(symbol, "Unknown")
                 value = float(stock.get("raw_equity", 0))
                 
                 if sector not in acc_sectors:
@@ -1184,17 +1236,6 @@ class PortfolioState(BaseState):
         
         # Determine if data is complete or has failures
         has_failures = len(failed_range_symbols) > 0
-        
-        # Cache results with appropriate TTL based on completeness
-        # Incomplete data gets a shorter TTL to allow faster retry
-        cache_ttl = 30 if has_failures else MARKET_DATA_TTL
-        set_cached(cache_key, {
-            "sector_data": sector_data, 
-            "range_data": range_52w_data,
-            "earnings_data": earnings_data,
-            "incomplete": has_failures,
-            "failed_symbols": list(failed_range_symbols) if has_failures else [],
-        }, cache_ttl)
         
         return sector_data, range_52w_data, earnings_data, has_failures
 
@@ -1209,7 +1250,66 @@ class PortfolioState(BaseState):
         Guards against concurrent fetches: if already loading, returns early.
         Sets cache immediately after core data fetch so subsequent page visits
         can use cached data even if analysis hasn't completed yet.
+        
+        Cache-first approach: checks cache before setting loading phase to avoid
+        a brief flash of the loading overlay when data is already cached.
         """
+        # Check cache BEFORE setting loading phase to avoid flash on cache hit.
+        # If we set FETCHING first, the loading overlay would briefly appear even
+        # when data is fully cached, causing a visual flash.
+        cached_data = get_cached("portfolio_data")
+        
+        if cached_data:
+            # Fast path: restore from cache without showing loading overlay
+            async with self:
+                if self.loading_phase != PortfolioLoadingPhase.IDLE:
+                    return  # Already loading, don't interfere
+            
+            # Restore from cache using a single lock acquisition to minimize UI updates
+            account_names = list(cached_data["account_map"].keys())
+            
+            # Pre-compute display caches in background threads BEFORE updating state
+            # This ensures the UI has everything ready when we flip the state
+            async with self:
+                hide_values = self.hide_portfolio_values
+                stock_sort_col = self.stock_sort_column
+                stock_sort_asc = self.stock_sort_ascending
+                options_sort_col = self.options_sort_column
+                options_sort_asc = self.options_sort_ascending
+            
+            new_stock_caches, new_option_caches, new_delta_caches, new_treemap_caches, new_sector_caches = \
+                await self._precompute_caches_in_background(
+                    cached_data["all_stock_holdings"],
+                    cached_data["all_options_holdings"],
+                    cached_data.get("sector_data", {}),
+                    cached_data.get("range_52w_data", {}),
+                    cached_data.get("earnings_data", {}),
+                    hide_values, stock_sort_col, stock_sort_asc, options_sort_col, options_sort_asc
+                )
+            
+            # Atomically restore all state in a single lock acquisition
+            # This prevents multiple UI re-renders during cache restore
+            async with self:
+                self.account_map = cached_data["account_map"]
+                self.all_stock_holdings = cached_data["all_stock_holdings"]
+                self.all_options_holdings = cached_data["all_options_holdings"]
+                self.metric_data = cached_data["metric_data"]
+                self.sp500_daily_change_pct = cached_data.get("sp500_daily_pct", 0.0)
+                self.sector_data = cached_data.get("sector_data", {})
+                self.range_52w_data = cached_data.get("range_52w_data", {})
+                self.earnings_data = cached_data.get("earnings_data", {})
+                self._cached_stock_holdings = new_stock_caches
+                self._cached_option_holdings = new_option_caches
+                self._cached_delta_exposure = new_delta_caches
+                self._cached_treemaps = new_treemap_caches
+                self._cached_sector_charts = new_sector_caches
+                if not self.selected_account and account_names:
+                    self.selected_account = account_names[0]
+            
+            yield rx.toast.success("Portfolio loaded from cache")
+            return
+
+        # Slow path: no cache, need to fetch from API
         # Guard against concurrent fetches
         async with self:
             if self.loading_phase != PortfolioLoadingPhase.IDLE:
@@ -1218,68 +1318,6 @@ class PortfolioState(BaseState):
             self.is_portfolio_loading = True  # Global flag for loading indicator on any page
 
         try:
-            # Check cache first
-            cached_data = get_cached("portfolio_data")
-            if cached_data:
-                # Restore from cache using multiple brief lock acquisitions
-                # This allows tab switch events to interleave, keeping UI responsive
-                
-                # Get account names outside the lock (avoid computed var access inside lock)
-                account_names = list(cached_data["account_map"].keys())
-                
-                async with self:
-                    self.account_map = cached_data["account_map"]
-                
-                async with self:
-                    self.all_stock_holdings = cached_data["all_stock_holdings"]
-                    self.all_options_holdings = cached_data["all_options_holdings"]
-                
-                async with self:
-                    self.metric_data = cached_data["metric_data"]
-                    self.sp500_daily_change_pct = cached_data.get("sp500_daily_pct", 0.0)
-                
-                async with self:
-                    self.sector_data = cached_data.get("sector_data", {})
-                    self.range_52w_data = cached_data.get("range_52w_data", {})
-                    self.earnings_data = cached_data.get("earnings_data", {})
-                
-                # Pre-compute display caches in background threads to avoid UI blocking
-                # on first tab interaction after cache restore
-                async with self:
-                    hide_values = self.hide_portfolio_values
-                    stock_sort_col = self.stock_sort_column
-                    stock_sort_asc = self.stock_sort_ascending
-                    options_sort_col = self.options_sort_column
-                    options_sort_asc = self.options_sort_ascending
-                
-                new_stock_caches, new_option_caches, new_delta_caches, new_treemap_caches, new_sector_caches = \
-                    await self._precompute_caches_in_background(
-                        cached_data["all_stock_holdings"],
-                        cached_data["all_options_holdings"],
-                        cached_data.get("sector_data", {}),
-                        cached_data.get("range_52w_data", {}),
-                        cached_data.get("earnings_data", {}),
-                        hide_values, stock_sort_col, stock_sort_asc, options_sort_col, options_sort_asc
-                    )
-                
-                async with self:
-                    # Replace caches atomically with pre-computed values
-                    self._cached_stock_holdings = new_stock_caches
-                    self._cached_option_holdings = new_option_caches
-                    self._cached_delta_exposure = new_delta_caches
-                    self._cached_treemaps = new_treemap_caches
-                    self._cached_sector_charts = new_sector_caches
-                
-                async with self:
-                    if not self.selected_account and account_names:
-                        self.selected_account = account_names[0]
-                    self._set_loading_phase(PortfolioLoadingPhase.IDLE)
-                    self.is_portfolio_loading = False  # Hide global loading indicator
-                
-                yield rx.toast.success("Portfolio loaded from cache")
-                return
-
-            # Fetch all accounts
             url = "https://api.robinhood.com/accounts/?default_to_all_accounts=true&include_managed=true&include_multiple_individual=true"
             res = await asyncio.to_thread(rs.request_get, url, "regular")
             

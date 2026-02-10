@@ -12,7 +12,7 @@ import pandas as pd
 import yfinance as yf
 from datetime import datetime, date
 from typing import Optional
-from .cache import get_cached, set_cached, MARKET_DATA_TTL, DEFAULT_TTL
+from .cache import get_cached, set_cached, MARKET_DATA_TTL, DEFAULT_TTL, EARNINGS_TTL
 
 
 def normalize_symbol_for_yfinance(symbol: str) -> str:
@@ -252,10 +252,6 @@ def calculate_ma_data_from_df(df: pd.DataFrame) -> dict:
     return result
 
 
-# Earnings date TTL: 6 hours since earnings dates don't change frequently
-EARNINGS_TTL = 21600
-
-
 def _is_warrant_or_unit(symbol: str) -> bool:
     """Check if symbol appears to be a warrant, unit, or rights offering.
     
@@ -425,7 +421,7 @@ async def batch_fetch_earnings_async(
     
     The default max_concurrent=10 is conservative. If rate limiting occurs:
     - Reduce to 5 for safer operation
-    - Results are cached for 6 hours (EARNINGS_TTL), so subsequent calls are free
+    - Results are cached for 24 hours (EARNINGS_TTL), so subsequent calls are free
     - Consider adding a small delay in fetch_one() if 429 errors persist
     
     Args:

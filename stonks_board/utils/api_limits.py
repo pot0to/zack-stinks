@@ -39,7 +39,7 @@ Endpoint Risk Levels:
     
     - ticker.calendar, ticker.earnings_dates: MODERATE RISK
       * Used for earnings date detection
-      * Cache for 6+ hours (EARNINGS_TTL)
+      * Cache for 24+ hours (EARNINGS_TTL)
 
 Rate Limit Responses:
     - HTTP 429 "Too Many Requests"
@@ -59,7 +59,7 @@ Current Implementation Compliance:
     - batch_fetch_history() uses yf.download() for efficient batch fetching ✓
     - batch_fetch_info() caches results per-symbol ✓
     - MARKET_DATA_TTL (60s) prevents excessive refreshes ✓
-    - EARNINGS_TTL (6 hours) for infrequently-changing data ✓
+    - EARNINGS_TTL (24 hours) for infrequently-changing data ✓
     - batch_fetch_earnings_async() limits concurrency to 10 ✓
 
 
@@ -131,10 +131,10 @@ from .cache import (
     DEFAULT_TTL,      # 300s (5 min) - general data
     MARKET_DATA_TTL,  # 60s (1 min) - real-time market data
     PORTFOLIO_TTL,    # 120s (2 min) - portfolio data from Robinhood
+    EARNINGS_TTL,     # 86400s (24 hours) - earnings dates
+    SECTOR_TTL,       # 604800s (7 days) - sector data
+    RANGE_52W_TTL,    # 86400s (24 hours) - 52-week high/low bounds
 )
-
-# Import EARNINGS_TTL from technical.py (canonical definition)
-from .technical import EARNINGS_TTL  # 21600s (6 hours) - earnings dates
 
 # Recommended minimum delays between API calls (in seconds)
 # These are conservative values to avoid rate limiting
@@ -177,5 +177,7 @@ def get_rate_limit_summary() -> str:
     - MARKET_DATA_TTL: 60 seconds
     - PORTFOLIO_TTL: 120 seconds
     - DEFAULT_TTL: 300 seconds
-    - EARNINGS_TTL: 21600 seconds (6 hours)
+    - EARNINGS_TTL: 86400 seconds (24 hours)
+    - SECTOR_TTL: 604800 seconds (7 days)
+    - RANGE_52W_TTL: 86400 seconds (24 hours)
     """

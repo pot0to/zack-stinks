@@ -7,7 +7,7 @@ from ..components.layout import page_layout
 from ..components.cards import metric_card
 from ..components.skeleton import skeleton_range_bar, skeleton_badge, skeleton_donut_chart, inline_spinner
 from ..state import PortfolioState, State
-from ..styles.constants import MASK_SHARES, MASK_DOLLAR, MASK_PERCENT, MASK_DELTA
+from ..styles.constants import MASK_SHARES, MASK_DOLLAR, MASK_PERCENT, MASK_DELTA, SIDEBAR_WIDTH_OPEN, SIDEBAR_WIDTH_COLLAPSED
 
 
 def portfolio_page() -> rx.Component:
@@ -44,40 +44,48 @@ def _login_required_view() -> rx.Component:
 
 
 def _loading_overlay() -> rx.Component:
-    """Full-screen loading overlay shown during portfolio fetch and analysis.
+    """Loading overlay shown during portfolio fetch and analysis.
     
-    Blocks all user interaction and provides clear feedback that data is loading.
-    This prevents the confusing UX where tab clicks queue up and execute rapidly
-    when loading completes.
+    Covers only the main content area (not the sidebar) so users can still
+    navigate to other pages while portfolio data loads. Blocks interaction
+    with portfolio content during both FETCHING and ANALYZING phases to
+    prevent confusing UX where clicks queue up and execute rapidly.
     """
     return rx.box(
         rx.center(
             rx.vstack(
                 rx.spinner(size="3"),
                 rx.heading("Loading Portfolio", size="6"),
-                rx.text("Fetching your holdings and positions...", size="3", color="gray"),
+                rx.cond(
+                    PortfolioState.is_fetching,
+                    rx.text("Fetching your holdings and positions...", size="3", color="gray"),
+                    rx.text("Analyzing sector exposure and market data...", size="3", color="gray"),
+                ),
                 spacing="4",
                 align="center",
             ),
-            height="100vh",
+            height="100%",
+            width="100%",
         ),
         position="fixed",
         top="0",
-        left="0",
+        # Offset from left to avoid covering the sidebar
+        left=rx.cond(State.sidebar_open, SIDEBAR_WIDTH_OPEN, SIDEBAR_WIDTH_COLLAPSED),
         right="0",
         bottom="0",
         background="rgba(0, 0, 0, 0.85)",
         z_index="1000",
+        transition="left 0.3s ease",
     )
 
 
 def _portfolio_content() -> rx.Component:
     """Main portfolio content with account tabs."""
     return rx.box(
-        # Full-screen loading overlay only during initial data fetch (FETCHING phase)
-        # During ANALYZING phase, UI is interactive with inline skeleton loaders
+        # Loading overlay during FETCHING and ANALYZING phases
+        # Covers main content only (not sidebar) so users can navigate away
         rx.cond(
-            PortfolioState.is_fetching,
+            PortfolioState.is_portfolio_busy,
             _loading_overlay(),
             rx.fragment(),
         ),
@@ -94,7 +102,7 @@ def _portfolio_content() -> rx.Component:
                                 lambda name: rx.tabs.trigger(
                                     name, 
                                     value=name,
-                                    disabled=PortfolioState.is_fetching,
+                                    disabled=PortfolioState.is_portfolio_busy,
                                 ),
                             ),
                         ),

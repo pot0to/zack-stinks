@@ -32,6 +32,12 @@ MARKET_DATA_TTL = 60  # 1 minute for real-time market data
 PORTFOLIO_TTL = 120  # 2 minutes for portfolio data
 STALE_GRACE_PERIOD = 60  # Serve stale data for up to 60s while refreshing
 
+# Tiered TTLs for data with different volatility characteristics
+# These reduce yfinance API calls by caching slow-changing data longer
+SECTOR_TTL = 604800  # 7 days - sectors rarely change unless major business pivot
+RANGE_52W_TTL = 86400  # 24 hours - 52-week bounds shift daily but meaningful change is weekly
+EARNINGS_TTL = 86400  # 24 hours - earnings dates announced weeks in advance
+
 
 def get_cached(key: str) -> Any | None:
     """Get a value from cache if it exists and hasn't expired.
