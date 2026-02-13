@@ -10,7 +10,7 @@ from .base import BaseState
 from ..utils.cache import get_cached, set_cached, PORTFOLIO_TTL, MARKET_DATA_TTL, SECTOR_TTL, RANGE_52W_TTL, EARNINGS_TTL
 from ..utils.technical import batch_fetch_earnings, batch_fetch_earnings_async, batch_fetch_history
 from ..utils.symbols import is_index_fund, INDEX_FUND_SYMBOLS
-from ..styles.constants import PL_GAIN_BUCKETS, PL_LOSS_BUCKETS, PL_NEUTRAL
+from ..styles.constants import PL_GAIN_BUCKETS, PL_LOSS_BUCKETS, PL_NEUTRAL, CASH_COLOR
 
 SHARES_PER_CONTRACT = 100
 
@@ -108,12 +108,14 @@ def _build_treemap_figure(
     raw_stocks: list[dict],
     raw_options: list[dict],
     hide_values: bool,
+    cash_value: float = 0.0,
 ) -> go.Figure:
     """Build treemap figure from raw holdings data.
     
     Standalone function usable from both computed vars and background threads.
+    Includes cash position as a distinct node when cash_value > 0.
     """
-    if not raw_stocks and not raw_options:
+    if not raw_stocks and not raw_options and cash_value <= 0:
         return go.Figure()
     
     labels = []
@@ -177,6 +179,16 @@ def _build_treemap_figure(
             hover_texts.append("*****<br>P/L: *****")
         else:
             hover_texts.append(f"${data['value']:,.2f}<br>P/L: {pl_dollar_str} ({pl_pct_str})")
+
+    # Add cash position as a distinct node (no P/L since uninvested)
+    if cash_value > 0:
+        labels.append("Cash")
+        values.append(cash_value)
+        colors.append(f"rgb({CASH_COLOR[0]}, {CASH_COLOR[1]}, {CASH_COLOR[2]})")
+        if hide_values:
+            hover_texts.append("*****<br>(No P/L - uninvested)")
+        else:
+            hover_texts.append(f"${cash_value:,.2f}<br>(No P/L - uninvested)")
 
     fig = go.Figure(go.Treemap(
         labels=labels,
@@ -616,7 +628,12 @@ class PortfolioState(BaseState):
         return result
     
     def _build_treemap_cache_key(self, acc_num: str) -> str:
-        """Build cache key for treemap including privacy state."""
+        """Build cache key for treemap including privacy state.
+        
+        Note: Cash value is not included in the key because cash changes
+        are always accompanied by a full portfolio refresh which invalidates
+        all caches. This avoids unnecessary cache misses.
+        """
         return f"{acc_num}:{self.hide_portfolio_values}"
 
 
@@ -806,7 +823,10 @@ class PortfolioState(BaseState):
 
     @rx.var
     def portfolio_treemap(self) -> go.Figure:
-        """Treemap for selected account. Uses cache for instant tab switching."""
+        """Treemap for selected account. Uses cache for instant tab switching.
+        
+        Includes cash position as a distinct node to show complete portfolio allocation.
+        """
         acc_num = self.account_map.get(self.selected_account)
         if not acc_num:
             return go.Figure()
@@ -818,7 +838,8 @@ class PortfolioState(BaseState):
         # Cache miss - compute using standalone function and store
         raw_stocks = self.all_stock_holdings.get(acc_num, [])
         raw_options = self.all_options_holdings.get(acc_num, [])
-        fig = _build_treemap_figure(raw_stocks, raw_options, self.hide_portfolio_values)
+        cash_raw = float(self.metric_data.get(acc_num, {}).get("cash_raw", 0))
+        fig = _build_treemap_figure(raw_stocks, raw_options, self.hide_portfolio_values, cash_raw)
         self._cached_treemaps[cache_key] = fig
         return fig
 
@@ -882,6 +903,7 @@ class PortfolioState(BaseState):
         )
         
         c_str = f"${float(account_profile.get('cash', 0)):,.2f}"
+        c_raw = float(account_profile.get('cash', 0))
         b_str = f"${float(account_profile.get('buying_power', 0)):,.2f}"
         
         # Extract equity values for daily P/L calculation
@@ -902,6 +924,7 @@ class PortfolioState(BaseState):
             "stocks": acc_stocks,
             "options": acc_options,
             "cash": c_str,
+            "cash_raw": c_raw,
             "buying_power": b_str,
             "equity": equity,
             "equity_prev_close": equity_prev_close,
@@ -1309,6 +1332,7 @@ class PortfolioState(BaseState):
                 await self._precompute_caches_in_background(
                     cached_data["all_stock_holdings"],
                     cached_data["all_options_holdings"],
+                    cached_data["metric_data"],
                     cached_data.get("sector_data", {}),
                     cached_data.get("range_52w_data", {}),
                     cached_data.get("earnings_data", {}),
@@ -1402,6 +1426,7 @@ class PortfolioState(BaseState):
                 all_options[acc_num] = result["options"]
                 all_metrics[acc_num] = {
                     "cash": result["cash"],
+                    "cash_raw": result["cash_raw"],
                     "bp": result["buying_power"],
                     "equity": result["equity"],
                     "equity_prev_close": result["equity_prev_close"],
@@ -1478,6 +1503,7 @@ class PortfolioState(BaseState):
         self,
         all_stocks: dict,
         all_options: dict,
+        all_metrics: dict,
         sector_data: dict,
         range_52w_data: dict,
         earnings_data: dict,
@@ -1514,6 +1540,7 @@ class PortfolioState(BaseState):
             raw_stocks = all_stocks.get(acc_num, [])
             raw_options = all_options.get(acc_num, [])
             account_sector_data = sector_data.get(acc_num, {})
+            cash_raw = float(all_metrics.get(acc_num, {}).get("cash_raw", 0))
             
             # Format stock holdings (CPU-bound, run in thread)
             def format_stocks():
@@ -1698,7 +1725,7 @@ class PortfolioState(BaseState):
                 asyncio.to_thread(format_stocks),
                 asyncio.to_thread(format_options),
                 asyncio.to_thread(compute_delta),
-                asyncio.to_thread(_build_treemap_figure, raw_stocks, raw_options, hide_values),
+                asyncio.to_thread(_build_treemap_figure, raw_stocks, raw_options, hide_values, cash_raw),
                 asyncio.to_thread(_build_sector_chart_figure, account_sector_data, hide_values),
             )
             
@@ -1764,7 +1791,7 @@ class PortfolioState(BaseState):
             # This eliminates the cache miss window that caused UI blocking
             new_stock_caches, new_option_caches, new_delta_caches, new_treemap_caches, new_sector_caches = \
                 await self._precompute_caches_in_background(
-                    all_stocks, all_options, sector_data, range_52w_data, earnings_data,
+                    all_stocks, all_options, metric_data, sector_data, range_52w_data, earnings_data,
                     hide_values, stock_sort_col, stock_sort_asc, options_sort_col, options_sort_asc
                 )
 
@@ -1870,7 +1897,7 @@ class PortfolioState(BaseState):
             # Pre-compute all caches in background threads BEFORE updating state
             new_stock_caches, new_option_caches, new_delta_caches, new_treemap_caches, new_sector_caches = \
                 await self._precompute_caches_in_background(
-                    all_stocks, all_options, sector_data, range_52w_data, earnings_data,
+                    all_stocks, all_options, metric_data, sector_data, range_52w_data, earnings_data,
                     hide_values, stock_sort_col, stock_sort_asc, options_sort_col, options_sort_asc
                 )
             

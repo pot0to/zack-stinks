@@ -67,3 +67,6 @@ PL_LOSS_BUCKETS = [
 
 # Neutral gray for N/A values
 PL_NEUTRAL = (128, 128, 128)
+
+# Cash position color (light blue to distinguish from P/L spectrum and N/A gray)
+CASH_COLOR = (135, 180, 220)
