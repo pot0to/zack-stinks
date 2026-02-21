@@ -4,4 +4,3 @@ yfinance
 lxml
 plotly
 pandas
-reflex==0.8.27
