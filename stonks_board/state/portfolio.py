@@ -869,6 +869,13 @@ class PortfolioState(BaseState):
         (like tab switching) while validating the session. The state lock is
         only held briefly when updating state variables.
         """
+        # Clear any stale loading state from a previous interrupted fetch.
+        # Without this, navigating back to /portfolio after a mid-fetch
+        # interruption would show the loading overlay permanently.
+        async with self:
+            if self.loading_phase != PortfolioLoadingPhase.IDLE:
+                self._set_loading_phase(PortfolioLoadingPhase.IDLE)
+
         # Validate session with brief lock acquisitions
         is_valid = False
         try:
@@ -891,33 +898,67 @@ class PortfolioState(BaseState):
         yield PortfolioState.fetch_all_portfolio_data
     
     async def _process_single_account(self, name: str, acc_num: str) -> dict:
-        """Process a single account's data. Returns dict with all account data."""
-        # Fetch account profile, portfolio profile, stocks, and options in parallel
+        """Process a single account's data. Returns dict with all account data.
+
+        Each API call is isolated so that a failure in one (e.g. options)
+        does not discard the data from the others (e.g. stocks). Partial
+        results are returned with warnings attached so the caller can
+        surface them to the user.
+        """
+        warnings: list[str] = []
+
+        # Fetch account profile, portfolio profile, stocks, and options in parallel.
+        # return_exceptions=True ensures one failure doesn't cancel the others.
         account_profile_task = asyncio.to_thread(rs.profiles.load_account_profile, account_number=acc_num)
         portfolio_profile_task = asyncio.to_thread(rs.profiles.load_portfolio_profile, account_number=acc_num)
         stocks_task = asyncio.to_thread(rs.account.get_open_stock_positions, account_number=acc_num)
         options_task = asyncio.to_thread(rs.options.get_open_option_positions, account_number=acc_num)
-        
+
         account_profile, portfolio_profile, stock_positions, option_positions = await asyncio.gather(
-            account_profile_task, portfolio_profile_task, stocks_task, options_task
+            account_profile_task, portfolio_profile_task, stocks_task, options_task,
+            return_exceptions=True,
         )
-        
+
+        # Degrade gracefully per-call: use defaults when a call fails
+        if isinstance(account_profile, Exception):
+            warnings.append(f"account profile: {account_profile}")
+            account_profile = {}
+        if isinstance(portfolio_profile, Exception):
+            warnings.append(f"portfolio profile: {portfolio_profile}")
+            portfolio_profile = {}
+        if isinstance(stock_positions, Exception):
+            warnings.append(f"stock positions: {stock_positions}")
+            stock_positions = []
+        if isinstance(option_positions, Exception):
+            warnings.append(f"option positions: {option_positions}")
+            option_positions = []
+
         c_str = f"${float(account_profile.get('cash', 0)):,.2f}"
         c_raw = float(account_profile.get('cash', 0))
         b_str = f"${float(account_profile.get('buying_power', 0)):,.2f}"
-        
+
         # Extract equity values for daily P/L calculation
         # Use extended hours equity by default for most current value
-        # TODO: Consider adding UX toggle for "trading day" vs "extended hours" view
         equity = float(portfolio_profile.get('extended_hours_equity') or portfolio_profile.get('equity') or 0)
         equity_prev_close = float(portfolio_profile.get('adjusted_equity_previous_close') or portfolio_profile.get('equity_previous_close') or 0)
-        
-        # Process stocks
-        acc_stocks = await self._process_stock_positions(stock_positions)
-        
-        # Process options
-        acc_options = await self._process_option_positions(option_positions)
-        
+
+        # Process stocks and options independently so one failure doesn't lose both
+        try:
+            acc_stocks = await self._process_stock_positions(stock_positions)
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            warnings.append(f"processing stocks: {e}")
+            acc_stocks = []
+
+        try:
+            acc_options = await self._process_option_positions(option_positions)
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            warnings.append(f"processing options: {e}")
+            acc_options = []
+
         return {
             "name": name,
             "acc_num": acc_num,
@@ -928,38 +969,75 @@ class PortfolioState(BaseState):
             "buying_power": b_str,
             "equity": equity,
             "equity_prev_close": equity_prev_close,
+            "warnings": warnings,
         }
     
     async def _process_stock_positions(self, stock_positions: list) -> list[dict]:
-        """Process stock positions with parallel symbol lookups."""
+        """Process stock positions with parallel symbol lookups.
+
+        Resilient to partial failures: positions with missing symbols or
+        prices are skipped rather than crashing the entire account.
+        """
         if not stock_positions:
             return []
-        
-        # Fetch all symbols in parallel
+
+        # Fetch all symbols in parallel (some may fail and return None)
         symbol_tasks = [
-            asyncio.to_thread(rs.get_symbol_by_url, p['instrument']) 
+            asyncio.to_thread(rs.get_symbol_by_url, p.get('instrument', ''))
             for p in stock_positions
         ]
-        stock_symbols = await asyncio.gather(*symbol_tasks)
-        
-        # Fetch all prices in one batch call
-        prices = await asyncio.to_thread(rs.stocks.get_latest_price, stock_symbols)
-        
+        stock_symbols = await asyncio.gather(*symbol_tasks, return_exceptions=True)
+
+        # Resolve each symbol, keeping all positions (use "???" for failures)
+        resolved = []
+        for i, sym in enumerate(stock_symbols):
+            if isinstance(sym, Exception) or not sym:
+                resolved.append(("???", stock_positions[i]))
+            else:
+                resolved.append((sym, stock_positions[i]))
+
+        # Batch price fetch only for positions with known symbols.
+        # We use get_quotes (returns dicts with symbol keys) instead of
+        # get_latest_price (returns a positional list that silently drops
+        # symbols with no data, like pre-IPO tickers).
+        known_symbols = list(set(s for s, _ in resolved if s != "???"))
+        price_map: dict[str, float] = {}
+        if known_symbols:
+            try:
+                quotes = await asyncio.to_thread(rs.stocks.get_quotes, known_symbols)
+                if quotes:
+                    for q in quotes:
+                        if q and isinstance(q, dict) and q.get("symbol"):
+                            price_str = q.get("last_extended_hours_trade_price") or q.get("last_trade_price")
+                            if price_str:
+                                price_map[q["symbol"]] = float(price_str)
+            except Exception:
+                # Batch call failed; fall back to individual price lookups
+                import traceback
+                traceback.print_exc()
+                for sym in known_symbols:
+                    try:
+                        p_list = await asyncio.to_thread(rs.stocks.get_latest_price, [sym])
+                        if p_list and len(p_list) == 1 and p_list[0]:
+                            price_map[sym] = float(p_list[0])
+                    except Exception:
+                        pass  # Symbol gets price 0.0 via the default
+
         acc_stocks = []
-        for i, p in enumerate(stock_positions):
-            price = float(prices[i]) if prices[i] else 0.0
-            qty = float(p['quantity'])
-            
+        for sym, p in resolved:
+            price = price_map.get(sym, 0.0)
+            qty = float(p.get('quantity', 0))
+
             avg_buy_price_raw = p.get('average_buy_price') or p.get('pending_average_buy_price') or 0
             avg_buy_price = float(avg_buy_price_raw) if avg_buy_price_raw else 0.0
-            
+
             cost_basis_reliable = avg_buy_price > 0 and (price == 0 or avg_buy_price > price * 0.01)
             cost_basis = qty * avg_buy_price
             market_value = qty * price
             pl = market_value - cost_basis if cost_basis_reliable else 0
-            
+
             acc_stocks.append({
-                "symbol": stock_symbols[i],
+                "symbol": sym,
                 "shares": qty,
                 "price": price,
                 "raw_equity": market_value,
@@ -969,50 +1047,70 @@ class PortfolioState(BaseState):
                 "pl": pl,
                 "type": "Stock"
             })
-        
+
         return acc_stocks
     
     async def _process_option_positions(self, option_positions: list) -> list[dict]:
-        """Process option positions with parallel data fetches."""
+        """Process option positions with parallel data fetches.
+
+        Resilient to partial failures: individual options with missing data
+        are skipped, and underlying price lookups use a map to avoid
+        index-alignment issues with get_latest_price.
+        """
         if not option_positions:
             return []
-        
-        option_ids = [p['option_id'] for p in option_positions]
-        
+
+        # Filter to positions that have the required fields
+        valid_positions = [
+            p for p in option_positions
+            if p.get('option_id') and p.get('chain_symbol')
+        ]
+        if not valid_positions:
+            return []
+
+        option_ids = [p['option_id'] for p in valid_positions]
+
         # Fetch market data and instrument data in parallel for all options
         async def fetch_market_data(oid):
             return await asyncio.to_thread(rs.options.get_option_market_data_by_id, oid)
-        
+
         async def fetch_instrument_data(oid):
             return await asyncio.to_thread(rs.options.get_option_instrument_data_by_id, oid)
-        
+
         market_tasks = [fetch_market_data(oid) for oid in option_ids]
         instrument_tasks = [fetch_instrument_data(oid) for oid in option_ids]
-        
-        # Get unique underlying symbols
-        underlying_symbols = list(set(p["chain_symbol"] for p in option_positions))
-        underlying_task = asyncio.to_thread(rs.stocks.get_latest_price, underlying_symbols)
-        
+
+        # Get unique underlying symbols for price lookup.
+        # Use get_quotes (keyed by symbol) instead of get_latest_price
+        # (positional list that silently drops unresolvable symbols).
+        underlying_symbols = list(set(p["chain_symbol"] for p in valid_positions))
+        underlying_task = asyncio.to_thread(rs.stocks.get_quotes, underlying_symbols)
+
         # Run all fetches in parallel
         results = await asyncio.gather(
-            asyncio.gather(*market_tasks),
-            asyncio.gather(*instrument_tasks),
-            underlying_task
+            asyncio.gather(*market_tasks, return_exceptions=True),
+            asyncio.gather(*instrument_tasks, return_exceptions=True),
+            underlying_task,
+            return_exceptions=True,
         )
-        
-        market_data = results[0]
-        instrument_data = results[1]
-        underlying_prices_raw = results[2]
-        
-        underlying_price_map = {
-            sym: float(underlying_prices_raw[i] or 0) 
-            for i, sym in enumerate(underlying_symbols)
-        }
-        
+
+        market_data = results[0] if not isinstance(results[0], Exception) else []
+        instrument_data = results[1] if not isinstance(results[1], Exception) else []
+        underlying_quotes = results[2] if not isinstance(results[2], Exception) else []
+
+        # Build symbol -> price map from quote dicts
+        underlying_price_map: dict[str, float] = {}
+        if underlying_quotes:
+            for q in underlying_quotes:
+                if q and isinstance(q, dict) and q.get("symbol"):
+                    price_str = q.get("last_extended_hours_trade_price") or q.get("last_trade_price")
+                    if price_str:
+                        underlying_price_map[q["symbol"]] = float(price_str)
+
         acc_options = []
-        for i, p in enumerate(option_positions):
-            m_data = market_data[i] if (market_data and i < len(market_data)) else None
-            i_data = instrument_data[i] if (instrument_data and i < len(instrument_data)) else None
+        for i, p in enumerate(valid_positions):
+            m_data = market_data[i] if (market_data and i < len(market_data) and not isinstance(market_data[i], Exception)) else None
+            i_data = instrument_data[i] if (instrument_data and i < len(instrument_data) and not isinstance(instrument_data[i], Exception)) else None
 
             mark = 0.0
             delta = 0.0
@@ -1039,7 +1137,7 @@ class PortfolioState(BaseState):
                 except ValueError:
                     pass
         
-            qty = float(p['quantity'])
+            qty = float(p.get('quantity', 0))
             position_type = p.get('type', 'long')
             is_short = position_type == 'short'
             
@@ -1053,10 +1151,10 @@ class PortfolioState(BaseState):
                 pl = current_value - cost_basis
             
             signed_value = -current_value if is_short else current_value
-            underlying_price = underlying_price_map.get(p["chain_symbol"], 0)
+            underlying_price = underlying_price_map.get(p.get("chain_symbol", ""), 0)
             
             acc_options.append({
-                "symbol": p["chain_symbol"],
+                "symbol": p.get("chain_symbol", "???"),
                 "shares": qty,
                 "raw_equity": signed_value,
                 "position_type": position_type,
@@ -1113,14 +1211,17 @@ class PortfolioState(BaseState):
         
         Only symbols missing from cache trigger yfinance API calls.
         """
-        # Collect unique symbols across all accounts
+        # Collect unique symbols across all accounts for analysis.
+        # All resolved symbols are included regardless of price; the 15-second
+        # timeout on ticker.info protects against hanging on bad symbols, and
+        # per-symbol "unresolvable" caching prevents repeated timeout hits.
         all_symbols = set()
         individual_symbols = set()
         etf_symbols = set()
         for acc_stocks in all_stocks.values():
             for stock in acc_stocks:
                 symbol = stock.get("symbol", "")
-                if symbol:
+                if symbol and symbol != "???":
                     all_symbols.add(symbol)
                     if is_index_fund(symbol):
                         etf_symbols.add(symbol)
@@ -1167,19 +1268,36 @@ class PortfolioState(BaseState):
         if individual_symbols:
             earnings_task = batch_fetch_earnings_async(list(individual_symbols))
         
-        # Fetch ticker.info only for symbols that need sector OR 52-week data
-        # This is the expensive call we want to minimize
-        symbols_needing_info = list(set(symbols_needing_sector) | (set(symbols_needing_52w) & individual_symbols))
+        # Fetch ticker.info only for symbols that need sector OR 52-week data.
+        # Skip symbols previously marked unresolvable (24h cache) to avoid
+        # repeated 15-second timeout hits on known-bad symbols (pre-IPO, delisted).
+        UNRESOLVABLE_TTL = 86400  # 24 hours
+        symbols_needing_info = [
+            s for s in set(symbols_needing_sector) | (set(symbols_needing_52w) & individual_symbols)
+            if not get_cached(f"unresolvable:{s}")
+        ]
         symbol_info = {}
         
         if symbols_needing_info:
             async def fetch_info(symbol: str):
                 try:
                     ticker = yf.Ticker(symbol)
-                    info = await asyncio.to_thread(lambda: ticker.info)
+                    info = await asyncio.wait_for(
+                        asyncio.to_thread(lambda: ticker.info),
+                        timeout=15.0,
+                    )
+                    if not info or not info.get("sector"):
+                        # No meaningful data returned; mark as unresolvable
+                        # so we don't retry on the next analysis pass
+                        set_cached(f"unresolvable:{symbol}", True, UNRESOLVABLE_TTL)
                     return symbol, info
+                except asyncio.TimeoutError:
+                    print(f"Timeout fetching info for {symbol} (15s)")
+                    set_cached(f"unresolvable:{symbol}", True, UNRESOLVABLE_TTL)
+                    return symbol, {}
                 except Exception as e:
                     print(f"Error fetching info for {symbol}: {e}")
+                    set_cached(f"unresolvable:{symbol}", True, UNRESOLVABLE_TTL)
                     return symbol, {}
             
             info_tasks = [fetch_info(s) for s in symbols_needing_info]
@@ -1264,8 +1382,12 @@ class PortfolioState(BaseState):
                     range_pct = ((current - low_52) / (high_52 - low_52)) * 100
                     range_52w_data[symbol] = float(range_pct)
         
-        # Track symbols that failed to get 52-week range data
-        failed_range_symbols = all_symbols - set(range_52w_data.keys())
+        # Track symbols that failed to get 52-week range data, excluding
+        # symbols cached as unresolvable (they'll be retried after 24h TTL expires)
+        failed_range_symbols = {
+            s for s in all_symbols - set(range_52w_data.keys())
+            if not get_cached(f"unresolvable:{s}")
+        }
         
         # Build sector_data per account using cached sectors
         sector_data = {}
@@ -1411,16 +1533,28 @@ class PortfolioState(BaseState):
             account_results = all_results[0]
             sp500_pct = all_results[1]
 
-            # Aggregate results
+            # Aggregate results, surfacing per-account warnings to the user
             all_stocks = {}
             all_options = {}
             all_metrics = {}
-            
-            for result in account_results:
+            account_warnings: list[str] = []
+
+            for idx, result in enumerate(account_results):
                 if isinstance(result, Exception):
-                    print(f"Error processing account: {result}")
+                    # Identify which account failed using the task list order
+                    failed_name = current_accounts[idx][0] if idx < len(current_accounts) else "unknown"
+                    account_warnings.append(f"{failed_name}: {result}")
+                    # Still populate empty data so the tab isn't misleadingly blank
+                    acc_num = current_accounts[idx][1] if idx < len(current_accounts) else None
+                    if acc_num:
+                        all_stocks[acc_num] = []
+                        all_options[acc_num] = []
+                        all_metrics[acc_num] = {
+                            "cash": "$0.00", "cash_raw": 0.0, "bp": "$0.00",
+                            "equity": 0.0, "equity_prev_close": 0.0,
+                        }
                     continue
-                    
+
                 acc_num = result["acc_num"]
                 all_stocks[acc_num] = result["stocks"]
                 all_options[acc_num] = result["options"]
@@ -1431,6 +1565,10 @@ class PortfolioState(BaseState):
                     "equity": result["equity"],
                     "equity_prev_close": result["equity_prev_close"],
                 }
+
+                # Collect per-call warnings (partial failures within the account)
+                for w in result.get("warnings", []):
+                    account_warnings.append(f"{result['name']}: {w}")
 
             # Update state with core portfolio data immediately
             # This makes the UI responsive while analysis runs in background
@@ -1478,7 +1616,12 @@ class PortfolioState(BaseState):
             # This fetches sector, 52-week range, and earnings data
             yield PortfolioState.analyze_portfolio_positions
 
-            yield rx.toast.success("Portfolio loaded")
+            if account_warnings:
+                for w in account_warnings:
+                    yield rx.toast.warning(f"Partial data: {w}")
+                yield rx.toast.info("Portfolio loaded with warnings")
+            else:
+                yield rx.toast.success("Portfolio loaded")
         except Exception as e:
             error_str = str(e)
             if "401" in error_str or "Unauthorized" in error_str:

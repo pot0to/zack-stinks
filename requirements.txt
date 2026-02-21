@@ -1,6 +1,7 @@
-reflex==0.8.26
+reflex
 robin_stocks
 yfinance
 lxml
 plotly
 pandas
+reflex==0.8.27

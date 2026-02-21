@@ -439,7 +439,13 @@ async def batch_fetch_earnings_async(
     async def fetch_one(symbol: str) -> tuple[str, dict]:
         async with semaphore:
             try:
-                return symbol, await asyncio.to_thread(get_earnings_date, symbol)
+                return symbol, await asyncio.wait_for(
+                    asyncio.to_thread(get_earnings_date, symbol),
+                    timeout=15.0,
+                )
+            except asyncio.TimeoutError:
+                print(f"Timeout fetching earnings for {symbol} (15s)")
+                return symbol, {}
             except Exception as e:
                 print(f"Error fetching earnings for {symbol}: {e}")
                 return symbol, {}

@@ -85,7 +85,7 @@ def _portfolio_content() -> rx.Component:
         # Loading overlay during FETCHING and ANALYZING phases
         # Covers main content only (not sidebar) so users can navigate away
         rx.cond(
-            PortfolioState.is_portfolio_busy,
+            PortfolioState.is_portfolio_busy & State.is_logged_in,
             _loading_overlay(),
             rx.fragment(),
         ),
