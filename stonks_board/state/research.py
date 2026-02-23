@@ -8,6 +8,7 @@ from plotly.subplots import make_subplots
 from .base import BaseState
 from ..utils.technical import calculate_ma_proximity, calculate_ma_series, get_earnings_date
 from ..utils.cache import get_cached, set_cached, DEFAULT_TTL
+from ..utils.price_db import get_history as db_get_history
 
 
 class ResearchState(BaseState):
@@ -107,11 +108,11 @@ class ResearchState(BaseState):
             full_hist = get_cached(cache_key)
             
             if full_hist is None:
-                # Fetch 2 years of data (covers all display periods + 200-day MA calculations)
+                # Fetch 2 years via local price DB (incremental: only new days hit the API)
                 full_hist = await asyncio.to_thread(
-                    ticker_obj.history, period="2y"
+                    db_get_history, self.ticker, "2y"
                 )
-                if not full_hist.empty:
+                if full_hist is not None and not full_hist.empty:
                     set_cached(cache_key, full_hist, DEFAULT_TTL)
             
             if full_hist is None or full_hist.empty:
@@ -288,8 +289,7 @@ class ResearchState(BaseState):
         spy_cache_key = "stock_history:SPY"
         spy_hist = get_cached(spy_cache_key)
         if spy_hist is None:
-            spy_ticker = yf.Ticker("SPY")
-            spy_hist = await asyncio.to_thread(spy_ticker.history, period="1y")
+            spy_hist = await asyncio.to_thread(db_get_history, "SPY", "1y")
             if spy_hist is not None and not spy_hist.empty:
                 set_cached(spy_cache_key, spy_hist, DEFAULT_TTL)
         

@@ -12,6 +12,7 @@ from .utils.technical import (
     batch_fetch_info,
     calculate_ma_data_from_df,
 )
+from .utils.price_db import get_history
 
 
 class StockAnalyzer:
@@ -27,13 +28,13 @@ class StockAnalyzer:
         """
         Fetch major indices for the header cards.
         Returns a dict with price, daily change, 1-month high/low, and currency flag.
+        Uses local price DB for incremental fetching.
         """
         market_results = {}
         
         for name, ticker_symbol in self.ticker_map.items():
             try:
-                ticker = yf.Ticker(ticker_symbol)
-                df = ticker.history(period="1mo")
+                df = get_history(ticker_symbol, period="1mo")
                 
                 if not df.empty:
                     current_val = df['Close'].iloc[-1]

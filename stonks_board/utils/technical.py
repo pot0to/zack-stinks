@@ -89,9 +89,8 @@ def get_stock_ma_data(symbol: str, period: str = "1y") -> dict:
     }
     
     try:
-        yf_symbol = normalize_symbol_for_yfinance(symbol)
-        ticker = yf.Ticker(yf_symbol)
-        df = ticker.history(period=period)
+        from .price_db import get_history
+        df = get_history(symbol, period=period)
         
         if df.empty:
             set_cached(cache_key, result, MARKET_DATA_TTL)
@@ -117,59 +116,21 @@ def get_stock_ma_data(symbol: str, period: str = "1y") -> dict:
 
 def batch_fetch_history(symbols: list[str], period: str = "1y") -> dict[str, pd.DataFrame]:
     """
-    Batch fetch historical data for multiple symbols using yfinance's download().
-    Returns a dict mapping symbol -> DataFrame with OHLCV data.
+    Batch fetch historical data for multiple symbols, backed by local SQLite DB.
     
-    RATE LIMIT NOTE: This is the PREFERRED method for fetching price history.
-    yf.download() fetches all symbols in a single API call, which is far more
-    efficient than individual ticker.history() calls and reduces rate limit risk.
-    
-    For 50 symbols:
-    - Individual calls: 50 API requests (high rate limit risk)
-    - Batch download: 1 API request (minimal rate limit risk)
+    Delegates to price_db.batch_get_history() which checks the local database
+    first and only fetches the delta (new trading days) from yfinance. Symbols
+    with recent data in the DB require zero API calls.
     
     Args:
         symbols: List of stock symbols to fetch
-        period: History period (1d, 5d, 1mo, 3mo, 6mo, 1y, 2y, 5y, 10y, ytd, max)
+        period: History period (1mo, 3mo, 6mo, 1y, 2y)
     
     Returns:
         Dict mapping original symbol -> DataFrame with OHLCV columns
     """
-    if not symbols:
-        return {}
-    
-    # Normalize symbols for yfinance
-    yf_symbols = [normalize_symbol_for_yfinance(s) for s in symbols]
-    symbol_map = dict(zip(yf_symbols, symbols))  # Map back to original symbols
-    
-    try:
-        # yf.download with group_by="ticker" returns multi-level columns for multiple symbols
-        data = yf.download(yf_symbols, period=period, group_by="ticker", threads=True, progress=False)
-        
-        if data.empty:
-            return {}
-        
-        result = {}
-        
-        # Handle single vs multiple symbols (yfinance returns different structures)
-        if len(yf_symbols) == 1:
-            # Single symbol: columns are just OHLCV
-            original_symbol = symbol_map[yf_symbols[0]]
-            result[original_symbol] = data
-        else:
-            # Multiple symbols: columns are (symbol, OHLCV)
-            for yf_sym in yf_symbols:
-                if yf_sym in data.columns.get_level_values(0):
-                    original_symbol = symbol_map[yf_sym]
-                    symbol_df = data[yf_sym].dropna(how="all")
-                    if not symbol_df.empty:
-                        result[original_symbol] = symbol_df
-        
-        return result
-        
-    except Exception as e:
-        print(f"Error in batch fetch: {e}")
-        return {}
+    from .price_db import batch_get_history
+    return batch_get_history(symbols, period=period)
 
 
 def batch_fetch_info(symbols: list[str]) -> dict[str, dict]:

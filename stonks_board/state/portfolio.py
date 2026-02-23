@@ -11,6 +11,7 @@ from ..utils.cache import get_cached, set_cached, PORTFOLIO_TTL, MARKET_DATA_TTL
 from ..utils.technical import batch_fetch_earnings, batch_fetch_earnings_async, batch_fetch_history
 from ..utils.symbols import is_index_fund, INDEX_FUND_SYMBOLS
 from ..styles.constants import PL_GAIN_BUCKETS, PL_LOSS_BUCKETS, PL_NEUTRAL, CASH_COLOR
+from ..utils.price_db import get_history as db_get_history, batch_get_history as db_batch_get_history
 
 SHARES_PER_CONTRACT = 100
 
@@ -1180,8 +1181,7 @@ class PortfolioState(BaseState):
             return float(cached)
         
         try:
-            ticker = yf.Ticker("^GSPC")
-            df = await asyncio.to_thread(lambda: ticker.history(period="5d"))
+            df = await asyncio.to_thread(lambda: db_get_history("^GSPC", "1mo"))
             
             if df is None or df.empty or len(df) < 2:
                 return 0.0
@@ -1353,12 +1353,12 @@ class PortfolioState(BaseState):
         history_data = {}
         if symbols_needing_history and earnings_task:
             history_task = asyncio.to_thread(
-                batch_fetch_history, symbols_needing_history, "1y"
+                db_batch_get_history, symbols_needing_history, "1y"
             )
             history_data, earnings_data = await asyncio.gather(history_task, earnings_task)
         elif symbols_needing_history:
             history_data = await asyncio.to_thread(
-                batch_fetch_history, symbols_needing_history, "1y"
+                db_batch_get_history, symbols_needing_history, "1y"
             )
             earnings_data = {}
         elif earnings_task:

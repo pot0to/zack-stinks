@@ -7,6 +7,7 @@ import yfinance as yf
 from ..analyzer import StockAnalyzer
 from ..utils.cache import get_cached, set_cached, MARKET_DATA_TTL, DEFAULT_TTL
 from ..utils.technical import batch_fetch_earnings_async
+from ..utils.price_db import get_history as db_get_history
 
 class MarketState(BaseState):
     market_data: dict[str, dict[str, str]] = {}
@@ -287,11 +288,12 @@ class MarketState(BaseState):
                 return None
             try:
                 df = await asyncio.to_thread(
-                    lambda: yf.Ticker(symbol).history(period="1mo").reset_index()
+                    lambda s=symbol: db_get_history(s, "1mo")
                 )
-                if df.empty:
+                if df is None or df.empty:
                     return None
                 
+                df = df.reset_index()
                 start_price = df["Close"].iloc[0]
                 relative_growth = (((df["Close"] / start_price) - 1) * 100).round(2).tolist()
                 dates = df["Date"].dt.strftime("%b %d").tolist()
