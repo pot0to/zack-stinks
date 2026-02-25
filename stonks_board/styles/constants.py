@@ -14,8 +14,6 @@ ACCENT_PRIMARY_HOVER = "#9333ea"
 
 # Status colors
 COLOR_SUCCESS = "rgb(34, 197, 94)"
-COLOR_ERROR = "rgb(239, 68, 68)"
-COLOR_WARNING = "rgb(250, 204, 21)"
 COLOR_NEUTRAL = "rgb(156, 163, 175)"
 
 # Spacing

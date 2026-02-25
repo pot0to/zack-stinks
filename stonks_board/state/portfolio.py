@@ -4,12 +4,11 @@ from datetime import datetime
 from enum import Enum
 import robin_stocks.robinhood as rs
 import plotly.graph_objects as go
-import pandas as pd
 import yfinance as yf
 from .base import BaseState
-from ..utils.cache import get_cached, set_cached, PORTFOLIO_TTL, MARKET_DATA_TTL, SECTOR_TTL, RANGE_52W_TTL, EARNINGS_TTL
-from ..utils.technical import batch_fetch_earnings, batch_fetch_earnings_async, batch_fetch_history
-from ..utils.symbols import is_index_fund, INDEX_FUND_SYMBOLS
+from ..utils.cache import get_cached, set_cached, PORTFOLIO_TTL, MARKET_DATA_TTL, SECTOR_TTL, RANGE_52W_TTL
+from ..utils.technical import batch_fetch_earnings_async
+from ..utils.symbols import is_index_fund
 from ..styles.constants import PL_GAIN_BUCKETS, PL_LOSS_BUCKETS, PL_NEUTRAL, CASH_COLOR
 from ..utils.price_db import get_history as db_get_history, batch_get_history as db_batch_get_history
 
@@ -80,8 +79,221 @@ def _toggle_sort(current_col: str, current_asc: bool, new_col: str) -> tuple[str
     return new_col, True
 
 
+# Standalone formatters for use by both instance methods and background threads.
+# Module-level functions avoid issues with pickling self in thread pools.
+
+def _format_stock_holdings(
+    raw_data: list[dict],
+    range_52w_data: dict[str, float],
+    earnings_data: dict[str, dict],
+    sort_col: str,
+    sort_ascending: bool,
+) -> list[dict]:
+    """Format raw stock holdings into display-ready dicts with sorting.
+
+    Shared by PortfolioState computed vars (reads from self) and background
+    precompute (reads from captured snapshots). Keeping one copy prevents
+    the two paths from drifting apart.
+    """
+    if not raw_data:
+        return []
+
+    total_equity = sum(float(item.get("raw_equity", 0)) for item in raw_data)
+    formatted = []
+
+    for item in raw_data:
+        val = float(item.get("raw_equity", 0))
+        shares = float(item.get("shares", 0))
+        price = float(item.get("price", 0))
+        avg_buy_price = float(item.get("average_buy_price", 0))
+        cost_basis = float(item.get("cost_basis", 0))
+        pl = float(item.get("pl", 0))
+        cost_basis_reliable = item.get("cost_basis_reliable", True)
+
+        pl_pct = (pl / cost_basis * 100) if cost_basis > 0 and cost_basis_reliable else 0
+        allocation = (val / total_equity * 100) if total_equity > 0 else 0
+
+        symbol = item.get("symbol", "???")
+        range_52w = range_52w_data.get(symbol)
+
+        earnings_info = earnings_data.get(symbol, {})
+        days_until_earnings = earnings_info.get("days_until")
+        has_upcoming_earnings = days_until_earnings is not None and 0 <= days_until_earnings <= 7
+
+        earnings_urgency = None
+        if has_upcoming_earnings:
+            earnings_urgency = "imminent" if days_until_earnings <= 3 else "soon"
+
+        earnings_tooltip = ""
+        if has_upcoming_earnings:
+            date_str = earnings_info.get("earnings_date_str", "")
+            timing = earnings_info.get("timing", "")
+            timing_str = f" ({timing})" if timing else ""
+            days_str = f"in {days_until_earnings} day{'s' if days_until_earnings != 1 else ''}"
+            earnings_tooltip = f"Earnings {date_str}{timing_str} - {days_str}"
+
+        formatted.append({
+            "symbol": symbol,
+            "price_raw": price,
+            "price": f"${price:,.2f}",
+            "shares_raw": shares,
+            "shares": f"{shares:.4f}",
+            "value_raw": val,
+            "value": f"${val:,.2f}",
+            "avg_cost_raw": avg_buy_price if cost_basis_reliable else None,
+            "avg_cost": f"${avg_buy_price:,.2f}" if cost_basis_reliable else "N/A",
+            "pl_raw": pl if cost_basis_reliable else None,
+            "pl": pl,
+            "pl_formatted": (f"${abs(pl):,.2f}" if pl >= 0 else f"-${abs(pl):,.2f}") if cost_basis_reliable else "N/A",
+            "pl_pct_raw": pl_pct if cost_basis_reliable else None,
+            "pl_pct_formatted": (f"{abs(pl_pct):.2f}%" if pl_pct >= 0 else f"-{abs(pl_pct):.2f}%") if cost_basis_reliable else "N/A",
+            "pl_positive": pl >= 0,
+            "cost_basis_reliable": cost_basis_reliable,
+            "allocation": f"{allocation:.2f}%",
+            "allocation_raw": allocation,
+            "raw_equity": val,
+            "range_52w_raw": range_52w,
+            "range_52w": f"{range_52w:.0f}%" if range_52w is not None else "N/A",
+            "has_upcoming_earnings": has_upcoming_earnings,
+            "earnings_urgency": earnings_urgency,
+            "earnings_tooltip": earnings_tooltip,
+        })
+
+    formatted.sort(key=lambda x: _sort_key_for_column(x, sort_col), reverse=not sort_ascending)
+    return formatted
+
+
+def _format_option_holdings(
+    raw_options: list[dict],
+    raw_stocks: list[dict],
+    sort_col: str,
+    sort_ascending: bool,
+) -> list[dict]:
+    """Format raw option holdings into display-ready dicts with sorting."""
+    if not raw_options:
+        return []
+
+    stock_exposure = sum(abs(float(s.get("raw_equity", 0))) for s in raw_stocks)
+    option_exposure = sum(abs(float(o.get("raw_equity", 0))) for o in raw_options)
+    total_exposure = stock_exposure + option_exposure
+
+    formatted = []
+    for item in raw_options:
+        val = float(item.get("raw_equity", 0))
+        is_short = item.get("is_short", False)
+        weight = (abs(val) / total_exposure * 100) if total_exposure > 0 else 0
+
+        strike = float(item.get("strike_price", 0))
+        option_type = item.get("option_type", "")
+        dte = int(item.get("dte", 0))
+        raw_delta = float(item.get("delta", 0))
+        # Position delta: negate for short positions to reflect actual directional exposure
+        delta = -raw_delta if is_short else raw_delta
+        underlying = float(item.get("underlying_price", 0))
+        cost_basis = float(item.get("cost_basis", 0))
+        current_value = float(item.get("current_value", 0))
+        pl = float(item.get("pl", 0))
+        pl_pct = (pl / cost_basis * 100) if cost_basis > 0 else 0
+
+        is_itm = (option_type == "Call" and underlying > strike) or \
+                 (option_type == "Put" and underlying < strike)
+
+        formatted.append({
+            "symbol": item.get("symbol", "???"),
+            "strike_raw": strike,
+            "strike": f"${strike:,.2f}",
+            "option_type": option_type,
+            "side": "Short" if is_short else "Long",
+            "dte": str(dte),
+            "dte_raw": dte,
+            "underlying_raw": underlying,
+            "underlying": f"${underlying:,.2f}",
+            "delta_raw": delta,
+            "delta": f"{delta:.3f}",
+            "cost_basis_raw": cost_basis,
+            "cost_basis": f"${cost_basis:,.2f}",
+            "current_value_raw": current_value,
+            "current_value": f"${current_value:,.2f}",
+            "pl": pl,
+            "pl_raw": pl,
+            "pl_formatted": f"${abs(pl):,.2f}" if pl >= 0 else f"-${abs(pl):,.2f}",
+            "pl_pct_raw": pl_pct,
+            "pl_pct_formatted": f"{abs(pl_pct):.2f}%" if pl_pct >= 0 else f"-{abs(pl_pct):.2f}%",
+            "pl_positive": pl >= 0,
+            "weight_raw": weight,
+            "weight": f"{weight:.2f}%",
+            "is_short": is_short,
+            "is_itm": is_itm,
+            "raw_equity": val,
+        })
+
+    formatted.sort(key=lambda x: _sort_key_for_column(x, sort_col), reverse=not sort_ascending)
+    return formatted
+
+
+def _compute_delta_exposure(
+    raw_stocks: list[dict],
+    raw_options: list[dict],
+) -> list[dict]:
+    """Compute per-ticker delta exposure combining stocks and options."""
+    symbols_with_options = {o.get("symbol", "") for o in raw_options if o.get("symbol")}
+    if not symbols_with_options:
+        return []
+
+    delta_by_symbol: dict[str, dict] = {}
+
+    for stock in raw_stocks:
+        symbol = stock.get("symbol", "")
+        if not symbol or symbol not in symbols_with_options:
+            continue
+        shares = float(stock.get("shares", 0))
+        if symbol not in delta_by_symbol:
+            delta_by_symbol[symbol] = {"stock_delta": 0.0, "options_delta": 0.0}
+        delta_by_symbol[symbol]["stock_delta"] += shares
+
+    for option in raw_options:
+        symbol = option.get("symbol", "")
+        if not symbol:
+            continue
+        contracts = float(option.get("shares", 0))
+        option_delta = float(option.get("delta", 0))
+        is_short = option.get("is_short", False)
+        position_delta = contracts * SHARES_PER_CONTRACT * option_delta
+        if is_short:
+            position_delta = -position_delta
+        if symbol not in delta_by_symbol:
+            delta_by_symbol[symbol] = {"stock_delta": 0.0, "options_delta": 0.0}
+        delta_by_symbol[symbol]["options_delta"] += position_delta
+
+    result = []
+    max_abs_delta = 0.0
+
+    for symbol, deltas in delta_by_symbol.items():
+        stock_d = deltas["stock_delta"]
+        options_d = deltas["options_delta"]
+        net_d = stock_d + options_d
+        max_abs_delta = max(max_abs_delta, abs(net_d))
+        result.append({
+            "symbol": symbol,
+            "stock_delta_raw": stock_d,
+            "stock_delta": f"{stock_d:+,.0f}" if stock_d != 0 else "0",
+            "options_delta_raw": options_d,
+            "options_delta": f"{options_d:+,.0f}" if options_d != 0 else "0",
+            "net_delta_raw": net_d,
+            "net_delta": f"{net_d:+,.0f}",
+            "is_bullish": net_d >= 0,
+            "is_index_fund": is_index_fund(symbol),
+        })
+
+    for item in result:
+        bar_pct = (abs(item["net_delta_raw"]) / max_abs_delta * 100) if max_abs_delta > 0 else 0
+        item["bar_width"] = f"{bar_pct:.0f}%"
+
+    result.sort(key=lambda x: abs(x["net_delta_raw"]), reverse=True)
+    return result
+
+
 # Standalone chart builders for use by both instance methods and background threads.
-# These are module-level functions to avoid issues with pickling self in thread pools.
 
 # Sector color mapping used by sector chart builder
 _SECTOR_COLORS = {
@@ -416,217 +628,29 @@ class PortfolioState(BaseState):
     
     def _format_stock_holdings_for_account(self, acc_num: str) -> list[dict]:
         """Format stock holdings for a single account. Used for cache population."""
-        raw_data = self.all_stock_holdings.get(acc_num, [])
-        if not raw_data:
-            return []
-        
-        total_equity = sum(float(item.get("raw_equity", 0)) for item in raw_data)
-        
-        formatted = []
-        for item in raw_data:
-            val = float(item.get("raw_equity", 0))
-            shares = float(item.get("shares", 0))
-            price = float(item.get("price", 0))
-            avg_buy_price = float(item.get("average_buy_price", 0))
-            cost_basis = float(item.get("cost_basis", 0))
-            pl = float(item.get("pl", 0))
-            cost_basis_reliable = item.get("cost_basis_reliable", True)
-            
-            pl_pct = (pl / cost_basis * 100) if cost_basis > 0 and cost_basis_reliable else 0
-            allocation = (val / total_equity * 100) if total_equity > 0 else 0
-            
-            symbol = item.get("symbol", "???")
-            range_52w = self.range_52w_data.get(symbol)
-            
-            earnings_info = self.earnings_data.get(symbol, {})
-            days_until_earnings = earnings_info.get("days_until")
-            has_upcoming_earnings = days_until_earnings is not None and 0 <= days_until_earnings <= 7
-            
-            earnings_urgency = None
-            if has_upcoming_earnings:
-                earnings_urgency = "imminent" if days_until_earnings <= 3 else "soon"
-            
-            earnings_tooltip = ""
-            if has_upcoming_earnings:
-                date_str = earnings_info.get("earnings_date_str", "")
-                timing = earnings_info.get("timing", "")
-                timing_str = f" ({timing})" if timing else ""
-                days_str = f"in {days_until_earnings} day{'s' if days_until_earnings != 1 else ''}"
-                earnings_tooltip = f"Earnings {date_str}{timing_str} - {days_str}"
-            
-            formatted.append({
-                "symbol": symbol,
-                "price_raw": price,
-                "price": f"${price:,.2f}",
-                "shares_raw": shares,
-                "shares": f"{shares:.4f}",
-                "value_raw": val,
-                "value": f"${val:,.2f}",
-                "avg_cost_raw": avg_buy_price if cost_basis_reliable else None,
-                "avg_cost": f"${avg_buy_price:,.2f}" if cost_basis_reliable else "N/A",
-                "pl_raw": pl if cost_basis_reliable else None,
-                "pl": pl,
-                "pl_formatted": (f"${abs(pl):,.2f}" if pl >= 0 else f"-${abs(pl):,.2f}") if cost_basis_reliable else "N/A",
-                "pl_pct_raw": pl_pct if cost_basis_reliable else None,
-                "pl_pct_formatted": (f"{abs(pl_pct):.2f}%" if pl_pct >= 0 else f"-{abs(pl_pct):.2f}%") if cost_basis_reliable else "N/A",
-                "pl_positive": pl >= 0,
-                "cost_basis_reliable": cost_basis_reliable,
-                "allocation": f"{allocation:.2f}%",
-                "allocation_raw": allocation,
-                "raw_equity": val,
-                "range_52w_raw": range_52w,
-                "range_52w": f"{range_52w:.0f}%" if range_52w is not None else "N/A",
-                "has_upcoming_earnings": has_upcoming_earnings,
-                "earnings_urgency": earnings_urgency,
-                "earnings_tooltip": earnings_tooltip,
-            })
-        
-        sort_col = self.stock_sort_column
-        ascending = self.stock_sort_ascending
-        formatted.sort(key=lambda x: _sort_key_for_column(x, sort_col), reverse=not ascending)
-        return formatted
+        return _format_stock_holdings(
+            self.all_stock_holdings.get(acc_num, []),
+            self.range_52w_data,
+            self.earnings_data,
+            self.stock_sort_column,
+            self.stock_sort_ascending,
+        )
     
     def _format_option_holdings_for_account(self, acc_num: str) -> list[dict]:
         """Format option holdings for a single account. Used for cache population."""
-        raw_options = self.all_options_holdings.get(acc_num, [])
-        if not raw_options:
-            return []
-        
-        raw_stocks = self.all_stock_holdings.get(acc_num, [])
-        stock_exposure = sum(abs(float(s.get("raw_equity", 0))) for s in raw_stocks)
-        option_exposure = sum(abs(float(o.get("raw_equity", 0))) for o in raw_options)
-        total_exposure = stock_exposure + option_exposure
-        
-        formatted = []
-        for item in raw_options:
-            val = float(item.get("raw_equity", 0))
-            is_short = item.get("is_short", False)
-            
-            weight = (abs(val) / total_exposure * 100) if total_exposure > 0 else 0
-            
-            strike = float(item.get("strike_price", 0))
-            option_type = item.get("option_type", "")
-            dte = int(item.get("dte", 0))
-            raw_delta = float(item.get("delta", 0))
-            # Position delta: negate for short positions to reflect actual directional exposure
-            # Short call = negative delta (bearish), Short put = positive delta (bullish)
-            delta = -raw_delta if is_short else raw_delta
-            underlying = float(item.get("underlying_price", 0))
-            cost_basis = float(item.get("cost_basis", 0))
-            current_value = float(item.get("current_value", 0))
-            pl = float(item.get("pl", 0))
-            
-            pl_pct = (pl / cost_basis * 100) if cost_basis > 0 else 0
-            
-            is_itm = (option_type == "Call" and underlying > strike) or \
-                     (option_type == "Put" and underlying < strike)
-            
-            formatted.append({
-                "symbol": item.get("symbol", "???"),
-                "strike_raw": strike,
-                "strike": f"${strike:,.2f}",
-                "option_type": option_type,
-                "side": "Short" if is_short else "Long",
-                "dte": str(dte),
-                "dte_raw": dte,
-                "underlying_raw": underlying,
-                "underlying": f"${underlying:,.2f}",
-                "delta_raw": delta,
-                "delta": f"{delta:.3f}",
-                "cost_basis_raw": cost_basis,
-                "cost_basis": f"${cost_basis:,.2f}",
-                "current_value_raw": current_value,
-                "current_value": f"${current_value:,.2f}",
-                "pl": pl,
-                "pl_raw": pl,
-                "pl_formatted": f"${abs(pl):,.2f}" if pl >= 0 else f"-${abs(pl):,.2f}",
-                "pl_pct_raw": pl_pct,
-                "pl_pct_formatted": f"{abs(pl_pct):.2f}%" if pl_pct >= 0 else f"-{abs(pl_pct):.2f}%",
-                "pl_positive": pl >= 0,
-                "weight_raw": weight,
-                "weight": f"{weight:.2f}%",
-                "is_short": is_short,
-                "is_itm": is_itm,
-                "raw_equity": val,
-            })
-        
-        sort_col = self.options_sort_column
-        ascending = self.options_sort_ascending
-        formatted.sort(key=lambda x: _sort_key_for_column(x, sort_col), reverse=not ascending)
-        return formatted
+        return _format_option_holdings(
+            self.all_options_holdings.get(acc_num, []),
+            self.all_stock_holdings.get(acc_num, []),
+            self.options_sort_column,
+            self.options_sort_ascending,
+        )
     
     def _compute_delta_exposure_for_account(self, acc_num: str) -> list[dict]:
         """Compute delta exposure for a single account. Used for cache population."""
-        raw_stocks = self.all_stock_holdings.get(acc_num, [])
-        raw_options = self.all_options_holdings.get(acc_num, [])
-        
-        symbols_with_options = set()
-        for option in raw_options:
-            symbol = option.get("symbol", "")
-            if symbol:
-                symbols_with_options.add(symbol)
-        
-        if not symbols_with_options:
-            return []
-        
-        delta_by_symbol: dict[str, dict] = {}
-        
-        for stock in raw_stocks:
-            symbol = stock.get("symbol", "")
-            if not symbol or symbol not in symbols_with_options:
-                continue
-            shares = float(stock.get("shares", 0))
-            
-            if symbol not in delta_by_symbol:
-                delta_by_symbol[symbol] = {"stock_delta": 0.0, "options_delta": 0.0}
-            delta_by_symbol[symbol]["stock_delta"] += shares
-        
-        for option in raw_options:
-            symbol = option.get("symbol", "")
-            if not symbol:
-                continue
-            contracts = float(option.get("shares", 0))
-            option_delta = float(option.get("delta", 0))
-            is_short = option.get("is_short", False)
-            
-            position_delta = contracts * SHARES_PER_CONTRACT * option_delta
-            if is_short:
-                position_delta = -position_delta
-            
-            if symbol not in delta_by_symbol:
-                delta_by_symbol[symbol] = {"stock_delta": 0.0, "options_delta": 0.0}
-            delta_by_symbol[symbol]["options_delta"] += position_delta
-        
-        result = []
-        max_abs_delta = 0.0
-        
-        for symbol, deltas in delta_by_symbol.items():
-            stock_d = deltas["stock_delta"]
-            options_d = deltas["options_delta"]
-            net_d = stock_d + options_d
-            max_abs_delta = max(max_abs_delta, abs(net_d))
-            
-            result.append({
-                "symbol": symbol,
-                "stock_delta_raw": stock_d,
-                "stock_delta": f"{stock_d:+,.0f}" if stock_d != 0 else "0",
-                "options_delta_raw": options_d,
-                "options_delta": f"{options_d:+,.0f}" if options_d != 0 else "0",
-                "net_delta_raw": net_d,
-                "net_delta": f"{net_d:+,.0f}",
-                "is_bullish": net_d >= 0,
-                "is_index_fund": is_index_fund(symbol),
-            })
-        
-        for item in result:
-            if max_abs_delta > 0:
-                bar_pct = (abs(item["net_delta_raw"]) / max_abs_delta) * 100
-            else:
-                bar_pct = 0
-            item["bar_width"] = f"{bar_pct:.0f}%"
-        
-        result.sort(key=lambda x: abs(x["net_delta_raw"]), reverse=True)
-        return result
+        return _compute_delta_exposure(
+            self.all_stock_holdings.get(acc_num, []),
+            self.all_options_holdings.get(acc_num, []),
+        )
     
     def _build_treemap_cache_key(self, acc_num: str) -> str:
         """Build cache key for treemap including privacy state.
@@ -1673,201 +1697,21 @@ class PortfolioState(BaseState):
         
         async def compute_for_account(acc_num: str):
             """Compute all caches for a single account in thread pool."""
-            # Build cache keys
             stock_key = f"{acc_num}:{stock_sort_col}:{stock_sort_asc}"
             option_key = f"{acc_num}:{options_sort_col}:{options_sort_asc}"
             treemap_key = f"{acc_num}:{hide_values}"
             sector_key = f"{acc_num}:{hide_values}"
             
-            # Get raw data for this account
             raw_stocks = all_stocks.get(acc_num, [])
             raw_options = all_options.get(acc_num, [])
             account_sector_data = sector_data.get(acc_num, {})
             cash_raw = float(all_metrics.get(acc_num, {}).get("cash_raw", 0))
             
-            # Format stock holdings (CPU-bound, run in thread)
-            def format_stocks():
-                if not raw_stocks:
-                    return []
-                total_equity = sum(float(item.get("raw_equity", 0)) for item in raw_stocks)
-                formatted = []
-                for item in raw_stocks:
-                    val = float(item.get("raw_equity", 0))
-                    shares = float(item.get("shares", 0))
-                    price = float(item.get("price", 0))
-                    avg_buy_price = float(item.get("average_buy_price", 0))
-                    cost_basis = float(item.get("cost_basis", 0))
-                    pl = float(item.get("pl", 0))
-                    cost_basis_reliable = item.get("cost_basis_reliable", True)
-                    
-                    pl_pct = (pl / cost_basis * 100) if cost_basis > 0 and cost_basis_reliable else 0
-                    allocation = (val / total_equity * 100) if total_equity > 0 else 0
-                    
-                    symbol = item.get("symbol", "???")
-                    range_52w = range_52w_data.get(symbol)
-                    
-                    earnings_info = earnings_data.get(symbol, {})
-                    days_until_earnings = earnings_info.get("days_until")
-                    has_upcoming_earnings = days_until_earnings is not None and 0 <= days_until_earnings <= 7
-                    
-                    earnings_urgency = None
-                    if has_upcoming_earnings:
-                        earnings_urgency = "imminent" if days_until_earnings <= 3 else "soon"
-                    
-                    earnings_tooltip = ""
-                    if has_upcoming_earnings:
-                        date_str = earnings_info.get("earnings_date_str", "")
-                        timing = earnings_info.get("timing", "")
-                        timing_str = f" ({timing})" if timing else ""
-                        days_str = f"in {days_until_earnings} day{'s' if days_until_earnings != 1 else ''}"
-                        earnings_tooltip = f"Earnings {date_str}{timing_str} - {days_str}"
-                    
-                    formatted.append({
-                        "symbol": symbol,
-                        "price_raw": price,
-                        "price": f"${price:,.2f}",
-                        "shares_raw": shares,
-                        "shares": f"{shares:.4f}",
-                        "value_raw": val,
-                        "value": f"${val:,.2f}",
-                        "avg_cost_raw": avg_buy_price if cost_basis_reliable else None,
-                        "avg_cost": f"${avg_buy_price:,.2f}" if cost_basis_reliable else "N/A",
-                        "pl_raw": pl if cost_basis_reliable else None,
-                        "pl": pl,
-                        "pl_formatted": (f"${abs(pl):,.2f}" if pl >= 0 else f"-${abs(pl):,.2f}") if cost_basis_reliable else "N/A",
-                        "pl_pct_raw": pl_pct if cost_basis_reliable else None,
-                        "pl_pct_formatted": (f"{abs(pl_pct):.2f}%" if pl_pct >= 0 else f"-{abs(pl_pct):.2f}%") if cost_basis_reliable else "N/A",
-                        "pl_positive": pl >= 0,
-                        "cost_basis_reliable": cost_basis_reliable,
-                        "allocation": f"{allocation:.2f}%",
-                        "allocation_raw": allocation,
-                        "raw_equity": val,
-                        "range_52w_raw": range_52w,
-                        "range_52w": f"{range_52w:.0f}%" if range_52w is not None else "N/A",
-                        "has_upcoming_earnings": has_upcoming_earnings,
-                        "earnings_urgency": earnings_urgency,
-                        "earnings_tooltip": earnings_tooltip,
-                    })
-                formatted.sort(key=lambda x: _sort_key_for_column(x, stock_sort_col), reverse=not stock_sort_asc)
-                return formatted
-            
-            # Format option holdings (CPU-bound, run in thread)
-            def format_options():
-                if not raw_options:
-                    return []
-                stock_exposure = sum(abs(float(s.get("raw_equity", 0))) for s in raw_stocks)
-                option_exposure = sum(abs(float(o.get("raw_equity", 0))) for o in raw_options)
-                total_exposure = stock_exposure + option_exposure
-                
-                formatted = []
-                for item in raw_options:
-                    val = float(item.get("raw_equity", 0))
-                    is_short = item.get("is_short", False)
-                    weight = (abs(val) / total_exposure * 100) if total_exposure > 0 else 0
-                    strike = float(item.get("strike_price", 0))
-                    option_type = item.get("option_type", "")
-                    dte = int(item.get("dte", 0))
-                    raw_delta = float(item.get("delta", 0))
-                    # Position delta: negate for short positions to reflect actual directional exposure
-                    # Short call = negative delta (bearish), Short put = positive delta (bullish)
-                    delta = -raw_delta if is_short else raw_delta
-                    underlying = float(item.get("underlying_price", 0))
-                    cost_basis = float(item.get("cost_basis", 0))
-                    current_value = float(item.get("current_value", 0))
-                    pl = float(item.get("pl", 0))
-                    pl_pct = (pl / cost_basis * 100) if cost_basis > 0 else 0
-                    is_itm = (option_type == "Call" and underlying > strike) or \
-                             (option_type == "Put" and underlying < strike)
-                    
-                    formatted.append({
-                        "symbol": item.get("symbol", "???"),
-                        "strike_raw": strike,
-                        "strike": f"${strike:,.2f}",
-                        "option_type": option_type,
-                        "side": "Short" if is_short else "Long",
-                        "dte": str(dte),
-                        "dte_raw": dte,
-                        "underlying_raw": underlying,
-                        "underlying": f"${underlying:,.2f}",
-                        "delta_raw": delta,
-                        "delta": f"{delta:.3f}",
-                        "cost_basis_raw": cost_basis,
-                        "cost_basis": f"${cost_basis:,.2f}",
-                        "current_value_raw": current_value,
-                        "current_value": f"${current_value:,.2f}",
-                        "pl": pl,
-                        "pl_raw": pl,
-                        "pl_formatted": f"${abs(pl):,.2f}" if pl >= 0 else f"-${abs(pl):,.2f}",
-                        "pl_pct_raw": pl_pct,
-                        "pl_pct_formatted": f"{abs(pl_pct):.2f}%" if pl_pct >= 0 else f"-{abs(pl_pct):.2f}%",
-                        "pl_positive": pl >= 0,
-                        "weight_raw": weight,
-                        "weight": f"{weight:.2f}%",
-                        "is_short": is_short,
-                        "is_itm": is_itm,
-                        "raw_equity": val,
-                    })
-                formatted.sort(key=lambda x: _sort_key_for_column(x, options_sort_col), reverse=not options_sort_asc)
-                return formatted
-            
-            # Compute delta exposure
-            def compute_delta():
-                symbols_with_options = {o.get("symbol", "") for o in raw_options if o.get("symbol")}
-                if not symbols_with_options:
-                    return []
-                
-                delta_by_symbol = {}
-                for stock in raw_stocks:
-                    symbol = stock.get("symbol", "")
-                    if symbol and symbol in symbols_with_options:
-                        shares = float(stock.get("shares", 0))
-                        if symbol not in delta_by_symbol:
-                            delta_by_symbol[symbol] = {"stock_delta": 0.0, "options_delta": 0.0}
-                        delta_by_symbol[symbol]["stock_delta"] += shares
-                
-                for option in raw_options:
-                    symbol = option.get("symbol", "")
-                    if symbol:
-                        contracts = float(option.get("shares", 0))
-                        option_delta = float(option.get("delta", 0))
-                        is_short = option.get("is_short", False)
-                        position_delta = contracts * SHARES_PER_CONTRACT * option_delta
-                        if is_short:
-                            position_delta = -position_delta
-                        if symbol not in delta_by_symbol:
-                            delta_by_symbol[symbol] = {"stock_delta": 0.0, "options_delta": 0.0}
-                        delta_by_symbol[symbol]["options_delta"] += position_delta
-                
-                result = []
-                max_abs_delta = 0.0
-                for symbol, deltas in delta_by_symbol.items():
-                    stock_d = deltas["stock_delta"]
-                    options_d = deltas["options_delta"]
-                    net_d = stock_d + options_d
-                    max_abs_delta = max(max_abs_delta, abs(net_d))
-                    result.append({
-                        "symbol": symbol,
-                        "stock_delta_raw": stock_d,
-                        "stock_delta": f"{stock_d:+,.0f}" if stock_d != 0 else "0",
-                        "options_delta_raw": options_d,
-                        "options_delta": f"{options_d:+,.0f}" if options_d != 0 else "0",
-                        "net_delta_raw": net_d,
-                        "net_delta": f"{net_d:+,.0f}",
-                        "is_bullish": net_d >= 0,
-                        "is_index_fund": is_index_fund(symbol),
-                    })
-                
-                for item in result:
-                    bar_pct = (abs(item["net_delta_raw"]) / max_abs_delta * 100) if max_abs_delta > 0 else 0
-                    item["bar_width"] = f"{bar_pct:.0f}%"
-                result.sort(key=lambda x: abs(x["net_delta_raw"]), reverse=True)
-                return result
-            
-            # Run all computations in thread pool, using standalone functions for charts
+            # Run all computations in thread pool using shared module-level functions
             stock_cache, option_cache, delta_cache, treemap, sector_chart = await asyncio.gather(
-                asyncio.to_thread(format_stocks),
-                asyncio.to_thread(format_options),
-                asyncio.to_thread(compute_delta),
+                asyncio.to_thread(_format_stock_holdings, raw_stocks, range_52w_data, earnings_data, stock_sort_col, stock_sort_asc),
+                asyncio.to_thread(_format_option_holdings, raw_options, raw_stocks, options_sort_col, options_sort_asc),
+                asyncio.to_thread(_compute_delta_exposure, raw_stocks, raw_options),
                 asyncio.to_thread(_build_treemap_figure, raw_stocks, raw_options, hide_values, cash_raw),
                 asyncio.to_thread(_build_sector_chart_figure, account_sector_data, hide_values),
             )

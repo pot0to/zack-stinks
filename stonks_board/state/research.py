@@ -302,12 +302,7 @@ class ResearchState(BaseState):
 
     def _calculate_rsi(self, prices: pd.Series, period: int = 14) -> float:
         """Calculate the Relative Strength Index (current value only)."""
-        delta = prices.diff()
-        gain = delta.where(delta > 0, 0).rolling(window=period).mean()
-        loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
-        
-        rs = gain / loss
-        rsi = 100 - (100 / (1 + rs))
+        rsi = self._calculate_rsi_series(prices, period)
         return rsi.iloc[-1] if not pd.isna(rsi.iloc[-1]) else 0
 
     def _calculate_rsi_series(self, prices: pd.Series, period: int = 14) -> pd.Series:
@@ -317,14 +312,11 @@ class ResearchState(BaseState):
         loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
         
         rs = gain / loss
-        rsi = 100 - (100 / (1 + rs))
-        return rsi
+        return 100 - (100 / (1 + rs))
 
     def _calculate_macd(self, prices: pd.Series) -> float:
         """Calculate MACD (12-day EMA minus 26-day EMA) current value."""
-        ema_12 = prices.ewm(span=12, adjust=False).mean()
-        ema_26 = prices.ewm(span=26, adjust=False).mean()
-        macd_line = ema_12 - ema_26
+        macd_line, _, _ = self._calculate_macd_series(prices)
         return macd_line.iloc[-1]
 
     def _calculate_macd_series(self, prices: pd.Series) -> tuple[pd.Series, pd.Series, pd.Series]:

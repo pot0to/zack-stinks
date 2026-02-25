@@ -67,51 +67,6 @@ def calculate_ma_series(prices: pd.Series, window: int) -> Optional[pd.Series]:
     return prices.rolling(window=window).mean()
 
 
-def get_stock_ma_data(symbol: str, period: str = "1y") -> dict:
-    """
-    Fetch stock data and calculate MA values for a single symbol.
-    Results are cached per-symbol to avoid redundant API calls.
-    
-    Returns dict with current_price, ma_50, ma_200, pct_from_50, pct_from_200.
-    Values are None if unavailable. All numeric values are Python floats.
-    """
-    cache_key = f"ma_data:{symbol}:{period}"
-    cached = get_cached(cache_key)
-    if cached is not None:
-        return cached
-    
-    result = {
-        "current_price": None,
-        "ma_50": None,
-        "ma_200": None,
-        "pct_from_50": None,
-        "pct_from_200": None,
-    }
-    
-    try:
-        from .price_db import get_history
-        df = get_history(symbol, period=period)
-        
-        if df.empty:
-            set_cached(cache_key, result, MARKET_DATA_TTL)
-            return result
-        
-        prices = df["Close"]
-        result["current_price"] = float(prices.iloc[-1])
-        
-        ma_50, pct_50 = calculate_ma_proximity(prices, 50)
-        result["ma_50"] = ma_50
-        result["pct_from_50"] = pct_50
-        
-        ma_200, pct_200 = calculate_ma_proximity(prices, 200)
-        result["ma_200"] = ma_200
-        result["pct_from_200"] = pct_200
-        
-    except Exception as e:
-        print(f"Error fetching MA data for {symbol}: {e}")
-    
-    set_cached(cache_key, result, MARKET_DATA_TTL)
-    return result
 
 
 def batch_fetch_history(symbols: list[str], period: str = "1y") -> dict[str, pd.DataFrame]:
@@ -355,18 +310,6 @@ def get_earnings_date(symbol: str) -> dict:
     return result
 
 
-def batch_fetch_earnings(symbols: list[str]) -> dict[str, dict]:
-    """
-    Fetch earnings dates for multiple symbols (synchronous version).
-    Returns dict mapping symbol -> earnings data dict.
-    
-    Note: This is the legacy synchronous version. Prefer batch_fetch_earnings_async()
-    for better performance when called from async context.
-    """
-    result = {}
-    for symbol in symbols:
-        result[symbol] = get_earnings_date(symbol)
-    return result
 
 
 async def batch_fetch_earnings_async(
