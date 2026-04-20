@@ -4,6 +4,7 @@ __pycache__/
 assets/external/
 *.db
 .states
+.data
 credentials.json
 .env
 

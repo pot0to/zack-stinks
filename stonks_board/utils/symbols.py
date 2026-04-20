@@ -40,6 +40,10 @@ INDEX_FUND_SYMBOLS = frozenset({
     "VXUS",                  # Total international
     # Bonds (if held)
     "BND", "AGG", "TLT", "IEF", "SHY",
+    # Commodities / alternatives
+    "GLD", "SLV", "IAU",   # Gold / silver
+    "SHNY",                 # Direxion Broad Commodity
+    "RVI",                  # ReturnStacked US Equity & Volatility
     # Thematic / ARK
     "ARKK", "ARKW", "ARKF", "ARKG", "ARKQ",
     # Thematic / Other
@@ -48,6 +52,9 @@ INDEX_FUND_SYMBOLS = frozenset({
     "SHLD",  # Global X Defense Tech
     # Leveraged (common ones)
     "TQQQ", "SQQQ", "SPXL", "SPXS", "UPRO",
+    # Index option underlyings (not tradeable as stocks, but appear as
+    # chain_symbol on index options positions from Robinhood)
+    "SPX", "SPXW",
 })
 
 

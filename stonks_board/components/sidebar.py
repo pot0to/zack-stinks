@@ -180,6 +180,7 @@ def sidebar() -> rx.Component:
                     _nav_link("layout-dashboard", "Dashboard", "/"),
                     _nav_link("briefcase", "Portfolio", "/portfolio"),
                     _nav_link("search", "Stock Research", "/research"),
+                    _nav_link("eye", "Watchlist", "/watchlist"),
                     spacing="1",
                     padding_x="0.5em",
                     width=SIDEBAR_WIDTH_OPEN,

@@ -356,3 +356,84 @@ async def batch_fetch_earnings_async(
     
     results = await asyncio.gather(*[fetch_one(s) for s in symbols])
     return dict(results)
+
+
+# ---------------------------------------------------------------------------
+# RSI (Relative Strength Index)
+# ---------------------------------------------------------------------------
+
+def calculate_rsi_series(prices: pd.Series, period: int = 14) -> Optional[pd.Series]:
+    """Calculate RSI as a full series for charting.
+
+    Returns None if insufficient data.
+    """
+    if len(prices) < period + 1:
+        return None
+    delta = prices.diff()
+    gain = delta.where(delta > 0, 0).rolling(window=period).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
+    rs = gain / loss
+    return 100 - (100 / (1 + rs))
+
+
+def calculate_rsi(prices: pd.Series, period: int = 14) -> Optional[float]:
+    """Calculate the current RSI value.
+
+    Returns None if insufficient data or result is NaN.
+    """
+    rsi = calculate_rsi_series(prices, period)
+    if rsi is None:
+        return None
+    val = rsi.iloc[-1]
+    if pd.isna(val):
+        return None
+    return float(val)
+
+
+# ---------------------------------------------------------------------------
+# MACD (Moving Average Convergence Divergence)
+# ---------------------------------------------------------------------------
+
+def calculate_macd_series(prices: pd.Series) -> Optional[tuple[pd.Series, pd.Series, pd.Series]]:
+    """Calculate MACD line, signal line, and histogram as series.
+
+    Uses standard 12/26/9 parameters. Returns None if insufficient data.
+    """
+    if len(prices) < 35:  # need at least 26 + 9 for signal convergence
+        return None
+    ema_12 = prices.ewm(span=12, adjust=False).mean()
+    ema_26 = prices.ewm(span=26, adjust=False).mean()
+    macd_line = ema_12 - ema_26
+    signal_line = macd_line.ewm(span=9, adjust=False).mean()
+    histogram = macd_line - signal_line
+    return macd_line, signal_line, histogram
+
+
+def calculate_macd(prices: pd.Series) -> Optional[dict]:
+    """Calculate current MACD values.
+
+    Returns dict with 'macd', 'signal', 'histogram' keys, or None.
+    """
+    result = calculate_macd_series(prices)
+    if result is None:
+        return None
+    macd_line, signal_line, histogram = result
+    return {
+        "macd": float(macd_line.iloc[-1]),
+        "signal": float(signal_line.iloc[-1]),
+        "histogram": float(histogram.iloc[-1]),
+    }
+
+
+# ---------------------------------------------------------------------------
+# EMA (Exponential Moving Average)
+# ---------------------------------------------------------------------------
+
+def calculate_ema(prices: pd.Series, span: int) -> Optional[pd.Series]:
+    """Calculate EMA series using pandas ewm(span=...).
+
+    Returns None if insufficient data (need at least 2x span for convergence).
+    """
+    if len(prices) < span * 2:
+        return None
+    return prices.ewm(span=span, adjust=False).mean()

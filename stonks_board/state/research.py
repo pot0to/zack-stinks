@@ -6,7 +6,10 @@ import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from .base import BaseState
-from ..utils.technical import calculate_ma_proximity, calculate_ma_series, get_earnings_date
+from ..utils.technical import (
+    calculate_ma_proximity, calculate_ma_series, get_earnings_date,
+    calculate_rsi, calculate_rsi_series, calculate_macd, calculate_macd_series,
+)
 from ..utils.cache import get_cached, set_cached, DEFAULT_TTL
 from ..utils.price_db import get_history as db_get_history
 
@@ -173,9 +176,9 @@ class ResearchState(BaseState):
                 self.range_52w = "N/A"
 
             # RSI (14-day) with zone classification
-            rsi_value = self._calculate_rsi(full_hist['Close'], 14)
-            self.rsi_14 = f"{rsi_value:.1f}"
-            self.rsi_zone = self._classify_rsi(rsi_value)
+            rsi_value = calculate_rsi(full_hist['Close'], 14)
+            self.rsi_14 = f"{rsi_value:.1f}" if rsi_value is not None else "N/A"
+            self.rsi_zone = self._classify_rsi(rsi_value or 0)
 
             # Volatility calculation
             await self._calculate_volatility(full_hist)
@@ -188,12 +191,14 @@ class ResearchState(BaseState):
             self.ma_200_pct = f"{pct_from_200:+.1f}%" if pct_from_200 is not None else "N/A"
 
             # MACD
-            macd_value = self._calculate_macd(full_hist['Close'])
+            macd_data = calculate_macd(full_hist['Close'])
+            macd_value = macd_data["macd"] if macd_data else 0
             self.macd_signal = "Positive" if macd_value > 0 else "Negative"
 
             # Calculate RSI and MACD series for subplot charting
-            rsi_series = self._calculate_rsi_series(full_hist['Close'], 14)
-            macd_line, signal_line, histogram = self._calculate_macd_series(full_hist['Close'])
+            rsi_series = calculate_rsi_series(full_hist['Close'], 14)
+            macd_result = calculate_macd_series(full_hist['Close'])
+            macd_line, signal_line, histogram = macd_result if macd_result else (None, None, None)
             
             # Filter indicator series to match chart date range
             rsi_filtered = rsi_series[rsi_series.index >= chart_start] if rsi_series is not None else None
@@ -299,34 +304,6 @@ class ResearchState(BaseState):
             self.volatility_vs_spy = f"SPY: {spy_vol:.1f}%"
         else:
             self.volatility_vs_spy = "SPY: N/A"
-
-    def _calculate_rsi(self, prices: pd.Series, period: int = 14) -> float:
-        """Calculate the Relative Strength Index (current value only)."""
-        rsi = self._calculate_rsi_series(prices, period)
-        return rsi.iloc[-1] if not pd.isna(rsi.iloc[-1]) else 0
-
-    def _calculate_rsi_series(self, prices: pd.Series, period: int = 14) -> pd.Series:
-        """Calculate RSI as a full series for charting."""
-        delta = prices.diff()
-        gain = delta.where(delta > 0, 0).rolling(window=period).mean()
-        loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
-        
-        rs = gain / loss
-        return 100 - (100 / (1 + rs))
-
-    def _calculate_macd(self, prices: pd.Series) -> float:
-        """Calculate MACD (12-day EMA minus 26-day EMA) current value."""
-        macd_line, _, _ = self._calculate_macd_series(prices)
-        return macd_line.iloc[-1]
-
-    def _calculate_macd_series(self, prices: pd.Series) -> tuple[pd.Series, pd.Series, pd.Series]:
-        """Calculate MACD line, signal line, and histogram as series for charting."""
-        ema_12 = prices.ewm(span=12, adjust=False).mean()
-        ema_26 = prices.ewm(span=26, adjust=False).mean()
-        macd_line = ema_12 - ema_26
-        signal_line = macd_line.ewm(span=9, adjust=False).mean()
-        histogram = macd_line - signal_line
-        return macd_line, signal_line, histogram
 
     def _build_candlestick_chart(
         self, 

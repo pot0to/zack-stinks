@@ -3,10 +3,12 @@ import reflex as rx
 from .state.market import MarketState
 from .state.portfolio import PortfolioState
 from .state.research import ResearchState
+from .state.watchlist import WatchlistState
 from .pages.market import market_page
 from .pages.portfolio import portfolio_page
 from .pages.research import research_page
 from .pages.login import login_page
+from .pages.watchlist import watchlist_page
 
 # App with dark theme (color constants are optimized for dark backgrounds)
 # Note: For true adaptive light/dark, colors would need to use Reflex theme tokens
@@ -43,4 +45,11 @@ app.add_page(
 app.add_page(
     research_page,
     route="/research",
+)
+
+# Watchlist Page
+app.add_page(
+    watchlist_page,
+    route="/watchlist",
+    on_load=WatchlistState.load_watchlist,
 )
