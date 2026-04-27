@@ -50,6 +50,8 @@ INDEX_FUND_SYMBOLS = frozenset({
     "FINX",  # Global FinTech
     "SPMO",  # S&P 500 Momentum
     "SHLD",  # Global X Defense Tech
+    "AMZZ",  # ProShares S&P 500 ex-Amazon
+    "FMTM",  # Fidelity Momentum Factor ETF
     # Leveraged (common ones)
     "TQQQ", "SQQQ", "SPXL", "SPXS", "UPRO",
     # Index option underlyings (not tradeable as stocks, but appear as
